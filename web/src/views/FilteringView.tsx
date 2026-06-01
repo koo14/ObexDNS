@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Button,
   Card,
@@ -16,6 +16,7 @@ import {
 } from "@blueprintjs/core";
 import { useTranslation } from "react-i18next";
 import { Trash2, RefreshCw, Copy, ExternalLink } from "lucide-react";
+import { formatDateTime } from "../utils/date";
 
 interface FilteringViewProps {
   profileId: string;
@@ -244,7 +245,7 @@ export const FilteringView: React.FC<FilteringViewProps> = ({
               </td>
               <td className="text-xs opacity-60">
                 {list.last_synced_at
-                  ? new Date(list.last_synced_at * 1000).toLocaleString()
+                  ? formatDateTime(new Date(list.last_synced_at * 1000))
                   : t("filtering.neverSynced")}
               </td>
               <td>
@@ -284,7 +285,7 @@ export const FilteringView: React.FC<FilteringViewProps> = ({
             <span className="text-xs opacity-50">
               {t("filtering.tableLastSync")}:{" "}
               {selectedList?.last_synced_at
-                ? new Date(selectedList.last_synced_at * 1000).toLocaleString()
+                ? formatDateTime(new Date(selectedList.last_synced_at * 1000))
                 : "-"}
             </span>
             <div className="flex gap-2">

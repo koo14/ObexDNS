@@ -23,6 +23,7 @@ import {
   Smartphone, ShieldOff, ChevronDown,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { formatDateTime } from "../utils/date";
 
 export interface UserInfo {
   id: string;
@@ -412,7 +413,7 @@ const ActivityLogCard: React.FC = () => {
                           </Tag>
                         </td>
                         <td className="text-xs text-gray-500 whitespace-nowrap">
-                          {new Date(entry.timestamp * 1000).toLocaleString()}
+                          {formatDateTime(new Date(entry.timestamp * 1000))}
                         </td>
                         <td className="font-mono text-xs text-gray-500">
                           {entry.ip_address || "—"}
@@ -716,7 +717,7 @@ export const AccountView: React.FC = () => {
                       <td className="font-bold">{u.username}</td>
                       <td><Tag minimal intent={u.role === 'admin' ? Intent.DANGER : Intent.NONE}>{u.role === 'admin' ? t("account.roleAdmin") : t("account.roleUser")}</Tag></td>
                       <td><code className="text-xs">{u.id}</code></td>
-                      <td className="text-xs text-gray-500">{u.created_at ? new Date(u.created_at * 1000).toLocaleString() : '-'}</td>
+                      <td className="text-xs text-gray-500">{u.created_at ? formatDateTime(new Date(u.created_at * 1000)) : '-'}</td>
                       <td className="text-right"><Button minimal intent={Intent.DANGER} icon={<Trash2 size={14} />} disabled={u.id === me.id} onClick={() => handleDeleteUser(u.id)} /></td>
                     </tr>
                   ))}
