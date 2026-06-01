@@ -1,8 +1,7 @@
-import { D1Database, R2Bucket, ExecutionContext as CFExecutionContext } from "@cloudflare/workers-types";
+import { D1Database, ExecutionContext as CFExecutionContext } from "@cloudflare/workers-types";
 
 export interface Env {
   DB: D1Database;
-  BUCKET: R2Bucket;
   ASSETS: any;
   TURNSTILE_SECRET_KEY?: string;
   [key: string]: any;
