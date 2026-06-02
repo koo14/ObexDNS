@@ -36,7 +36,6 @@ import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
 import { getPresetRegions, type RegionConfigItem } from "../config/regions";
 import { generateMobileConfig } from "../utils/mobileconfig";
-import { generateLinuxScript } from "../utils/unixScript";
 
 interface SetupViewProps {
   profileId: string;
@@ -514,13 +513,15 @@ export const SetupView: React.FC<SetupViewProps> = ({
                 <p className="text-sm font-bold mb-2">{t("setup.linuxStep1")}</p>
                 <div className="relative group">
                   <pre className="bg-gray-100 dark:bg-gray-800 p-4 rounded-lg overflow-x-auto text-xs font-mono border border-gray-200 dark:border-gray-700">
-                    <code>{generateLinuxScript(dohUrl)}</code>
+                    <code>{`curl -sL "${window.location.origin}/setup.sh?key=${profileKey}" | sudo bash`}</code>
                   </pre>
                   <Button
                     className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
                     icon="duplicate"
+                    minimal
+                    small
                     onClick={() => {
-                      copyToClipboard(generateLinuxScript(dohUrl));
+                      copyToClipboard(`curl -sL "${window.location.origin}/setup.sh?key=${profileKey}" | sudo bash`);
                     }}
                   />
                 </div>
