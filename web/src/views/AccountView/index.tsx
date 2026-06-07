@@ -134,7 +134,7 @@ export const AccountView: React.FC = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           oldPassword: useTotpForPw ? undefined : oldPassword,
-          totpToken: tokenPayload,
+          totpTokenHash: tokenPayload,
           totpSalt: saltPayload,
           newPassword,
         }),

@@ -260,7 +260,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
           const hashHex = Array.from(new Uint8Array(hashBuffer))
             .map(b => b.toString(16).padStart(2, '0'))
             .join('');
-          body.totpToken = hashHex;
+          body.totpTokenHash = hashHex;
           body.totpSalt = salt;
         }
       }
