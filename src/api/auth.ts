@@ -75,7 +75,7 @@ export async function handleAuthRequest(request: Request, env: Env): Promise<Res
     try {
       const role = (await userModel.isEmpty()) ? 'admin' : 'user';
       await userModel.create({ id: userId, username, passwordHash: hashedPassword, role });
-      const session = await createSession(env.DB, userId);
+      const session = await createSession(env.DB, userId, clientIp, userAgent);
       const sessionCookie = createSessionCookie(session.id);
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Set-Cookie": sessionCookie, "Content-Type": "application/json" }
@@ -178,7 +178,7 @@ export async function handleAuthRequest(request: Request, env: Env): Promise<Res
     await cacheUtils.delete(cache, `ratelimit:login_fail:${clientIp}`);
     await activityLog.record(userId, 'login_success', clientIp, userAgent);
 
-    const session = await createSession(env.DB, userId);
+    const session = await createSession(env.DB, userId, clientIp, userAgent);
     const headers = new Headers({ "Content-Type": "application/json" });
     headers.append("Set-Cookie", createSessionCookie(session.id));
     headers.append("Set-Cookie", clearPreauthCookie());

@@ -6,6 +6,8 @@ export interface Session {
   id: string;
   user_id: string;
   expires_at: number;
+  ip_address?: string | null;
+  user_agent?: string | null;
 }
 
 export interface SessionValidationResult {
@@ -28,18 +30,20 @@ export function generateId(length: number): string {
 /**
  * Creates a new session in the database and returns it.
  */
-export async function createSession(db: D1Database, userId: string): Promise<Session> {
+export async function createSession(db: D1Database, userId: string, ipAddress: string | null = null, userAgent: string | null = null): Promise<Session> {
   const sessionId = generateId(40);
   const expiresAt = Math.floor(Date.now() / 1000) + SESSION_EXPIRATION_DAYS * 24 * 60 * 60;
   
   const session: Session = {
     id: sessionId,
     user_id: userId,
-    expires_at: expiresAt
+    expires_at: expiresAt,
+    ip_address: ipAddress,
+    user_agent: userAgent
   };
 
   const sessionModel = new SessionModel(db);
-  await sessionModel.createSession(session.id, session.user_id, session.expires_at);
+  await sessionModel.createSession(session.id, session.user_id, session.expires_at, session.ip_address, session.user_agent);
 
   return session;
 }
@@ -58,7 +62,9 @@ export async function validateSession(db: D1Database, sessionId: string): Promis
   const session: Session = {
     id: result.session_id,
     user_id: result.user_id,
-    expires_at: result.expires_at
+    expires_at: result.expires_at,
+    ip_address: result.ip_address,
+    user_agent: result.user_agent
   };
 
   const user: User = {

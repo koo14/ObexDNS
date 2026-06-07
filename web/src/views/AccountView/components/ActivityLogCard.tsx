@@ -105,6 +105,7 @@ export const ActivityLogCard: React.FC = () => {
                     <th>{t("account.activity.action", "Action")}</th>
                     <th>{t("account.activity.time", "Time")}</th>
                     <th>{t("account.activity.ip", "IP Address")}</th>
+                    <th>{t("account.activity.device", "Device")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -122,6 +123,9 @@ export const ActivityLogCard: React.FC = () => {
                         </td>
                         <td className="font-mono text-xs text-gray-500">
                           {entry.ip_address || "—"}
+                        </td>
+                        <td className="text-xs text-gray-500 max-w-[200px] truncate" title={entry.user_agent || ""}>
+                          {entry.user_agent || "—"}
                         </td>
                       </tr>
                     );
