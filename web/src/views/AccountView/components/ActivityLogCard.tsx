@@ -124,7 +124,7 @@ export const ActivityLogCard: React.FC = () => {
                         <td className="font-mono text-xs text-gray-500">
                           {entry.ip_address || "—"}
                         </td>
-                        <td className="text-xs text-gray-500 max-w-[200px] truncate" title={entry.user_agent || ""}>
+                        <td className="text-xs text-gray-500 max-w-50 truncate" title={entry.user_agent || ""}>
                           {entry.user_agent || "—"}
                         </td>
                       </tr>
