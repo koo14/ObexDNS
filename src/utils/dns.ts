@@ -268,47 +268,6 @@ export function parseDNSAnswer(raw: Uint8Array): { type: string; data: string; t
   return results;
 }
 
-export function buildResponse(queryRaw: Uint8Array, type: string, value: string, ttl: number = 60, rcode: number = 0): Uint8Array {
-  try {
-    if (!queryRaw || queryRaw.length < 12) {
-      // 极端情况：包太短，返回一个最简错误包
-      const err = new Uint8Array(12);
-      err[2] = 0x81; err[3] = 0x82; // Server Failure
-      return err;
-    }
-
-    // 准备 Header (12 字节)
-    const header = new Uint8Array(12);
-    header.set(queryRaw.slice(0, 12));
-    header[2] = (header[2] & 0x01) | 0x84; // QR=1, AA=1, 继承 RD
-    header[3] = 0x80 | (rcode & 0x0F);    // RA=1, RCODE
-    
-    // 提取 Question Section (紧跟 Header 之后)
-    let qEnd = 12;
-    const qCount = (queryRaw[4] << 8) | queryRaw[5];
-    for (let i = 0; i < qCount; i++) {
-      const { read } = decodeName(queryRaw, qEnd);
-      if (read === 0 && qEnd < queryRaw.length) {
-        qEnd++; // 安全步进
-      } else {
-        qEnd += read + 4;
-      }
-      if (qEnd > queryRaw.length) { qEnd = queryRaw.length; break; }
-    }
-    const questionSection = queryRaw.slice(12, qEnd);
-    
-    header[4] = (qCount >> 8) & 0xff; header[5] = qCount & 0xff; // 保持原始问题数
-    header[6] = 0; header[7] = value ? 1 : 0; // ANCOUNT
-    header[8] = 0; header[9] = 0;             // NSCOUNT
-    header[10] = 0; header[11] = 0;           // ARCOUNT (丢弃额外的附加记录)
-
-    if (!value) {
-      const res = new Uint8Array(12 + questionSection.length);
-      res.set(header);
-      res.set(questionSection, 12);
-      return res;
-    }
-
 export interface DNSRecord {
   name?: string; // If omitted, uses pointer to original query
   type: string;
