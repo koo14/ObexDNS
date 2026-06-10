@@ -81,6 +81,7 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
       }
 
       const [logsData, statsData] = await Promise.all([fetchLogsPromise, fetchStatsPromise]);
+      console.log("logsData:", logsData, "statsData:", statsData);
 
       if (isInitial) {
         setLogs(logsData);

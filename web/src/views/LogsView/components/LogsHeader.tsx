@@ -52,6 +52,7 @@ export const LogsHeader: React.FC<LogsHeaderProps> = ({
   stats,
 }) => {
   const { t } = useTranslation();
+  console.log("stats in LogsHeader:", stats);
 
   const filterMenu = (
     <Menu>
@@ -109,16 +110,16 @@ export const LogsHeader: React.FC<LogsHeaderProps> = ({
             {stats && (
               <>
                 <Tag minimal round>
-                  {t("analytics.totalQueries")}: {stats.total.toLocaleString()}
+                  {stats.total.toLocaleString()}
                 </Tag>
                 <Tag minimal round intent={Intent.SUCCESS}>
-                  {t("logs.statusPass")}: {stats.pass.toLocaleString()}
+                  {stats.pass.toLocaleString()}
                 </Tag>
                 <Tag minimal round intent={Intent.DANGER}>
-                  {t("logs.statusBlock")}: {stats.block.toLocaleString()}
+                  {stats.block.toLocaleString()}
                 </Tag>
                 <Tag minimal round intent={Intent.WARNING}>
-                  {t("logs.statusRedirect")}: {stats.redirect.toLocaleString()}
+                  {stats.redirect.toLocaleString()}
                 </Tag>
               </>
             )}
