@@ -58,7 +58,7 @@ export async function handleAuthRequest(request: Request, env: Env): Promise<Res
     if (request.headers.get("X-Password-Leaked") === "true" || request.headers.get("Exposed-Credential-Check") === "true") {
       return new Response("password_leaked", { status: 400 });
     }
-    if (await cacheUtils.isRateLimited(cache, `signup:${clientIp}`, 5, 3600)) {
+    if (await cacheUtils.isRateLimited(cache, `signup:${clientIp}`, 5, 600)) {
       return new Response("Too many attempts", { status: 429 });
     }
     const { username, password, turnstileToken } = await request.json() as any;
