@@ -70,7 +70,12 @@
     "usernameExists": "該用戶名已被註冊，請嘗試其他用戶名。",
     "skip": "跳過",
     "showPassword": "顯示密碼",
-    "hidePassword": "隱藏密碼"
+    "hidePassword": "隱藏密碼",
+    "unauthorizedDefault": "您的登入會話已失效，請重新登入。",
+    "unauthorizedGeo": "檢測到地理位置變更（超出距離限制），當前會話已被強制註銷。",
+    "unauthorizedExpired": "您的登入已過期，請重新登入。",
+    "unauthorizedReuse": "安全警報：檢測到重複登入，會話已終止。",
+    "unauthorizedRevoked": "您的會話已被註銷或刪除，請重新登入。"
   },
   "setup": {
     "title": "安裝指南",
