@@ -30,6 +30,12 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
   const [realtimeRefresh, setRealtimeRefresh] = useState(false);
   const [stats, setStats] = useState<{ total: number; pass: number; block: number; redirect: number } | null>(null);
   const [logRetentionDays, setLogRetentionDays] = useState<number>(30);
+  const [prevLatestTimestamp, setPrevLatestTimestamp] = useState<number | null>(null);
+
+  const logsRef = useRef<LogEntry[]>([]);
+  useEffect(() => {
+    logsRef.current = logs;
+  }, [logs]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const observer = useRef<IntersectionObserver | null>(null);
@@ -67,7 +73,7 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
       .catch(console.error);
   }, [profileId]);
 
-  const fetchLogs = async (currentRange: TimeRange, isInitial: boolean = true) => {
+  const fetchLogs = async (currentRange: TimeRange, isInitial: boolean = true, isAutoRefresh: boolean = false) => {
     // Abort the previous request if it's still running
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -114,6 +120,12 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
       console.log("logsData:", logsData, "statsData:", statsData);
 
       if (isInitial) {
+        if (isAutoRefresh) {
+          const oldLatest = logsRef.current.length > 0 ? logsRef.current[0].timestamp : null;
+          setPrevLatestTimestamp(oldLatest);
+        } else {
+          setPrevLatestTimestamp(null);
+        }
         setLogs(logsData);
         setHasMore(realtimeRefresh ? false : logsData.length >= limit);
         if (statsData) {
@@ -191,7 +203,7 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
         !searchQuery &&
         range !== "custom"
       ) {
-        fetchLogs(range, true);
+        fetchLogs(range, true, true);
       }
     }, 2000);
     return () => clearInterval(autoRefreshTimer);
@@ -237,9 +249,23 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
             </Callout>
           </div>
         ) : isMobile ? (
-          <LogsList logs={logs} setSelectedLog={setSelectedLog} setIsDrawerOpen={setIsDrawerOpen} lastLogElementRef={lastLogElementRef} />
+          <LogsList
+            logs={logs}
+            setSelectedLog={setSelectedLog}
+            setIsDrawerOpen={setIsDrawerOpen}
+            lastLogElementRef={lastLogElementRef}
+            prevLatestTimestamp={prevLatestTimestamp}
+            realtimeRefresh={realtimeRefresh}
+          />
         ) : (
-          <LogsTable logs={logs} setSelectedLog={setSelectedLog} setIsDrawerOpen={setIsDrawerOpen} lastLogElementRef={lastLogElementRef} />
+          <LogsTable
+            logs={logs}
+            setSelectedLog={setSelectedLog}
+            setIsDrawerOpen={setIsDrawerOpen}
+            lastLogElementRef={lastLogElementRef}
+            prevLatestTimestamp={prevLatestTimestamp}
+            realtimeRefresh={realtimeRefresh}
+          />
         )}
 
         <div className="p-6 flex flex-col items-center">
