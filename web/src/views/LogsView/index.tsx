@@ -4,7 +4,8 @@ import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
 
 import type {  LogEntry, LogsViewProps, TimeRange  } from "./types";
-import type { AccessPoint } from "../../types/auth";
+import { getProfileDetails, getProfileAccessPoints, getProfileAnalytics, getProfileLogs } from "../../services";
+import type { AccessPoint } from "../../services";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { LogsHeader } from "./components/LogsHeader";
 import { LogsTable } from "./components/LogsTable";
@@ -27,6 +28,10 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [accessPointIdFilter, setAccessPointIdFilter] = useState<string | null>(null);
   const [accessPoints, setAccessPoints] = useState<AccessPoint[]>([]);
+  const [destCountryFilter, setDestCountryFilter] = useState<string | null>(null);
+  const [countries, setCountries] = useState<{ country_code: string; country: string }[]>([]);
+  const [ispFilter, setIspFilter] = useState<string | null>(null);
+  const [isps, setIsps] = useState<{ name: string; count: number }[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [hasMore, setHasMore] = useState(true);
   const [realtimeRefresh, setRealtimeRefresh] = useState(false);
@@ -55,11 +60,10 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
 
   // Fetch log retention days from profile settings
   useEffect(() => {
-    fetch(`/api/profiles/${profileId}`)
-      .then((r) => r.json())
+    getProfileDetails(profileId)
       .then((data) => {
         try {
-          const settings = JSON.parse(data.settings);
+          const settings = JSON.parse(data.settings || "{}");
           setLogRetentionDays(settings.log_retention_days !== undefined ? Number(settings.log_retention_days) : 30);
         } catch (e) {
           console.error("Failed to parse settings", e);
@@ -69,11 +73,41 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
   }, [profileId]);
 
   useEffect(() => {
-    fetch(`/api/profiles/${profileId}/access_points`)
-      .then(r => r.json())
+    getProfileAccessPoints(profileId)
       .then(setAccessPoints)
       .catch(console.error);
   }, [profileId]);
+
+  useEffect(() => {
+    getProfileAnalytics(profileId, "destinations", "range=30d")
+      .then((data) => {
+        if (Array.isArray(data)) {
+          const filtered = data
+            .filter((item: any) => item.country_code)
+            .map((item: any) => ({
+              country_code: item.country_code,
+              country: item.country || item.country_code,
+            }));
+          setCountries(filtered);
+        }
+      })
+      .catch((e) => console.error("Failed to fetch destinations for filter", e));
+  }, [profileId]);
+
+  useEffect(() => {
+    setIspFilter(null);
+    const params = new URLSearchParams({ range: "30d" });
+    if (destCountryFilter) {
+      params.set("country_code", destCountryFilter);
+    }
+    getProfileAnalytics(profileId, "isps", params.toString())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setIsps(data);
+        }
+      })
+      .catch((e) => console.error("Failed to fetch ISPs for filter", e));
+  }, [profileId, destCountryFilter]);
 
   const fetchLogs = async (currentRange: TimeRange, isInitial: boolean = true, isAutoRefresh: boolean = false) => {
     // Abort the previous request if it's still running
@@ -91,31 +125,35 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
 
     try {
       const limit = realtimeRefresh ? PAGE_SIZE_IN_REALTIME : PAGE_SIZE;
-      let url = `/api/profiles/${profileId}/logs?range=${currentRange}&limit=${limit}`;
+      const params = new URLSearchParams({ range: currentRange, limit: String(limit) });
       if (currentRange === "custom" && customRange.start && customRange.end) {
         const startTs = Math.floor(new Date(customRange.start).getTime() / 1000);
         const endTs = Math.floor(new Date(customRange.end).getTime() / 1000);
-        url += `&start=${startTs}&end=${endTs}`;
+        params.set("start", String(startTs));
+        params.set("end", String(endTs));
       }
-      if (statusFilter) url += `&status=${statusFilter}`;
-      if (accessPointIdFilter) url += `&access_point_id=${accessPointIdFilter}`;
-      if (searchQuery) url += `&search=${encodeURIComponent(searchQuery)}`;
+      if (statusFilter) params.set("status", statusFilter);
+      if (accessPointIdFilter) params.set("access_point_id", accessPointIdFilter);
+      if (destCountryFilter) params.set("dest_country", destCountryFilter);
+      if (ispFilter) params.set("isp", ispFilter);
+      if (searchQuery) params.set("search", searchQuery);
       if (!isInitial && logs.length > 0) {
-        url += `&before=${logs[logs.length - 1].timestamp}`;
+        params.set("before", String(logs[logs.length - 1].timestamp));
       }
 
-      const fetchLogsPromise = fetch(url, { signal: controller.signal }).then((r) => r.json());
+      const fetchLogsPromise = getProfileLogs(profileId, params.toString(), { signal: controller.signal });
       let fetchStatsPromise: Promise<any> = Promise.resolve(null);
       
       if (isInitial) {
-        let statsUrl = `/api/profiles/${profileId}/analytics/summary?range=${currentRange}`;
+        const statsParams = new URLSearchParams({ range: currentRange });
         if (currentRange === "custom" && customRange.start && customRange.end) {
           const startTs = Math.floor(new Date(customRange.start).getTime() / 1000);
           const endTs = Math.floor(new Date(customRange.end).getTime() / 1000);
-          statsUrl += `&start=${startTs}&end=${endTs}`;
+          statsParams.set("start", String(startTs));
+          statsParams.set("end", String(endTs));
         }
-        if (searchQuery) statsUrl += `&search=${encodeURIComponent(searchQuery)}`;
-        fetchStatsPromise = fetch(statsUrl, { signal: controller.signal }).then((r) => r.json());
+        if (searchQuery) statsParams.set("search", searchQuery);
+        fetchStatsPromise = getProfileAnalytics(profileId, "summary", statsParams.toString(), { signal: controller.signal });
       }
 
       const [logsData, statsData] = await Promise.all([fetchLogsPromise, fetchStatsPromise]);
@@ -171,7 +209,7 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
   const loadMore = useCallback(() => {
     if (realtimeRefresh) return;
     if (!loading && !loadingMore && hasMore) fetchLogs(range, false);
-  }, [loading, loadingMore, hasMore, range, profileId, statusFilter, accessPointIdFilter, searchQuery, logs, customRange, realtimeRefresh]);
+  }, [loading, loadingMore, hasMore, range, profileId, statusFilter, accessPointIdFilter, destCountryFilter, ispFilter, searchQuery, logs, customRange, realtimeRefresh]);
 
   const lastLogElementRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -192,7 +230,7 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
     if (range === "custom" && (!customRange.start || !customRange.end)) return;
     const timer = setTimeout(() => fetchLogs(range, true), searchQuery ? 500 : 0);
     return () => clearTimeout(timer);
-  }, [profileId, range, statusFilter, accessPointIdFilter, searchQuery, customRange, realtimeRefresh]);
+  }, [profileId, range, statusFilter, accessPointIdFilter, destCountryFilter, ispFilter, searchQuery, customRange, realtimeRefresh]);
 
   useEffect(() => {
     const autoRefreshTimer = setInterval(() => {
@@ -208,7 +246,7 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
       }
     }, 2000);
     return () => clearInterval(autoRefreshTimer);
-  }, [profileId, range, searchQuery, realtimeRefresh, statusFilter, accessPointIdFilter]);
+  }, [profileId, range, searchQuery, realtimeRefresh, statusFilter, accessPointIdFilter, destCountryFilter, ispFilter]);
 
   const nowStr = new Date().toLocaleString("sv-SE").replace(" ", "T").slice(0, 16);
 
@@ -236,6 +274,12 @@ export const LogsView: React.FC<LogsViewProps> = ({ profileId, onQuickAction }) 
         accessPointIdFilter={accessPointIdFilter}
         setAccessPointIdFilter={setAccessPointIdFilter}
         accessPoints={accessPoints}
+        destCountryFilter={destCountryFilter}
+        setDestCountryFilter={setDestCountryFilter}
+        countries={countries}
+        ispFilter={ispFilter}
+        setIspFilter={setIspFilter}
+        isps={isps}
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         stats={stats}

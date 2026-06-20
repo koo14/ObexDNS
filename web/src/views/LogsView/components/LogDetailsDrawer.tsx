@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
-import { Drawer, Position, Section, SectionCard, Tag, Intent, Button, Spinner } from "@blueprintjs/core";
+import { Section, SectionCard, Tag, Intent, Button, Spinner } from "@blueprintjs/core";
 import { Activity, Globe, User, Edit3, ShieldCheck, ShieldAlert, ArrowRight, MapPin } from "lucide-react";
 import { clsx } from "clsx";
 import { useTranslation } from "react-i18next";
 import { formatDateTime } from "../../../utils/date";
 import type {  LogEntry  } from "../types";
 import { getFlagEmoji } from "../../../utils/getFlagEmoji";
+import { getProfileLogDetails } from "../../../services";
+import { SwipeableDrawer } from "../../../components/SwipeableDrawer";
 
 export interface LogDetailsDrawerProps {
   isDrawerOpen: boolean;
@@ -35,21 +37,18 @@ export const LogDetailsDrawer: React.FC<LogDetailsDrawerProps> = ({
   const [detailedLog, setDetailedLog] = useState<LogEntry | null>(null);
   const [loading, setLoading] = useState(false);
 
+
   useEffect(() => {
     if (isDrawerOpen && selectedLog?.id) {
       setLoading(true);
       setDetailedLog(null);
       
       const controller = new AbortController();
-      fetch(`/api/profiles/${profileId}/logs/${selectedLog.id}`, { signal: controller.signal })
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to fetch log details");
-          return res.json();
-        })
-        .then((data) => {
+      getProfileLogDetails(profileId, selectedLog.id, { signal: controller.signal })
+        .then((data: any) => {
           setDetailedLog(data);
         })
-        .catch((err) => {
+        .catch((err: any) => {
           if (err.name !== "AbortError") {
             console.error(err);
           }
@@ -67,17 +66,20 @@ export const LogDetailsDrawer: React.FC<LogDetailsDrawerProps> = ({
   }, [isDrawerOpen, selectedLog?.id, profileId]);
 
   return (
-    <Drawer
-      isOpen={isDrawerOpen}
+    <SwipeableDrawer
+      isOpen={isDrawerOpen && selectedLog !== null}
       onClose={() => setIsDrawerOpen(false)}
-      title={t("logs.details")}
+      title={
+        <div className="flex items-center gap-2">
+          <Activity size={18} />
+          <span>{t("logs.logDetails")}</span>
+        </div>
+      }
       icon="info-sign"
-      position={Position.RIGHT}
       size={isMobile ? "100%" : "450px"}
-      className="dark:bg-gray-900 dark:text-white shadow-none! bg-transparent! bg-bulletin! backdrop-blur-sm!"
     >
       {selectedLog && (
-        <div className={clsx("space-y-4 overflow-y-auto h-full pb-safe", isMobile ? "px-2" : "px-6")}>
+        <>
           <Section title={t("logs.basicInfo")} icon={<Activity size={16} />} className="shadow-none! rounded-lg!">
             <SectionCard>
               <div className="space-y-3">
@@ -221,8 +223,8 @@ export const LogDetailsDrawer: React.FC<LogDetailsDrawerProps> = ({
               </div>
             </SectionCard>
           </Section>
-        </div>
+        </>
       )}
-    </Drawer>
+    </SwipeableDrawer>
   );
 };
