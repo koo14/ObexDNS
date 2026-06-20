@@ -103,5 +103,15 @@ export async function handleSystemRequest(request: Request, env: Env): Promise<R
     }), { headers: { 'Content-Type': 'application/json' } });
   }
 
+  if (url.pathname === '/api/presets/upstreams') {
+    const upstreams = env.PRESET_UPSTREAMS ? JSON.parse(env.PRESET_UPSTREAMS) : [];
+    return new Response(JSON.stringify(upstreams), { headers: { 'Content-Type': 'application/json' } });
+  }
+
+  if (url.pathname === '/api/presets/filters') {
+    const filters = env.PRESET_EXTERNAL_FILTERS ? JSON.parse(env.PRESET_EXTERNAL_FILTERS) : [];
+    return new Response(JSON.stringify(filters), { headers: { 'Content-Type': 'application/json' } });
+  }
+
   return new Response("Not Found", { status: 404 });
 }

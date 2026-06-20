@@ -64,3 +64,15 @@ export async function queryDnsJson(server: string, name: string, type: string): 
   return res.json();
 }
 
+export async function getPresetUpstreams(): Promise<any[]> {
+  const res = await fetch("/api/presets/upstreams");
+  if (!res.ok) throw new Error("Failed to fetch preset upstreams");
+  return res.json();
+}
+
+export async function getPresetFilters(): Promise<any[]> {
+  const res = await fetch("/api/presets/filters");
+  if (!res.ok) throw new Error("Failed to fetch preset filters");
+  return res.json();
+}
+
