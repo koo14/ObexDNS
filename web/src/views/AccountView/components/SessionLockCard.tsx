@@ -19,6 +19,7 @@ import { ShieldCheck, ShieldAlert } from "lucide-react";
 import { hashPasswordClient, hashPin, hashTotpToken } from "../../../utils/auth";
 import { setPin, clearPin } from "../../../services";
 import type { UserInfo } from "../../../services";
+import { DigitInput } from "../../../components/DigitInput";
 
 interface SessionLockCardProps {
   user: UserInfo | null;
@@ -264,28 +265,22 @@ export const SessionLockCard: React.FC<SessionLockCardProps> = ({ user, onRefres
               labelFor="new-pin-input"
               helperText={t("auth.pinHelper", "Digits only, e.g., 1234")}
             >
-              <InputGroup
-                id="new-pin-input"
-                type="password"
-                maxLength={4}
-                placeholder="••••"
+              <DigitInput
+                length={4}
                 value={newPin}
-                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
-                leftIcon="key"
-                required
+                onChange={setNewPin}
+                type="password"
+                disabled={loading}
               />
             </FormGroup>
 
             <FormGroup label={t("auth.confirmPin", "Confirm New PIN")} labelFor="confirm-pin-input">
-              <InputGroup
-                id="confirm-pin-input"
-                type="password"
-                maxLength={4}
-                placeholder="••••"
+              <DigitInput
+                length={4}
                 value={confirmPin}
-                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ""))}
-                leftIcon="key"
-                required
+                onChange={setConfirmPin}
+                type="password"
+                disabled={loading}
               />
             </FormGroup>
 
@@ -307,14 +302,11 @@ export const SessionLockCard: React.FC<SessionLockCardProps> = ({ user, onRefres
 
             {user?.totp_enabled && useTotpForVerify ? (
               <FormGroup label={t("auth.totpCode", "2FA Code")} labelFor="verify-totp-input">
-                <InputGroup
-                  id="verify-totp-input"
-                  placeholder="000 000"
-                  maxLength={6}
+                <DigitInput
+                  length={6}
                   value={verifyTotp}
-                  onChange={(e) => setVerifyTotp(e.target.value.replace(/\D/g, ""))}
-                  leftIcon="mobile-phone"
-                  required
+                  onChange={setVerifyTotp}
+                  disabled={loading}
                 />
               </FormGroup>
             ) : (
@@ -380,14 +372,11 @@ export const SessionLockCard: React.FC<SessionLockCardProps> = ({ user, onRefres
 
             {user?.totp_enabled && useTotpForVerify ? (
               <FormGroup label={t("auth.totpCode", "2FA Code")} labelFor="disable-totp-input">
-                <InputGroup
-                  id="disable-totp-input"
-                  placeholder="000 000"
-                  maxLength={6}
+                <DigitInput
+                  length={6}
                   value={verifyTotp}
-                  onChange={(e) => setVerifyTotp(e.target.value.replace(/\D/g, ""))}
-                  leftIcon="mobile-phone"
-                  required
+                  onChange={setVerifyTotp}
+                  disabled={loading}
                 />
               </FormGroup>
             ) : (
