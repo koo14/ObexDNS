@@ -25,6 +25,8 @@ export interface PreloginResponse {
   requires_password: boolean;
   requires_totp: boolean;
   password_version?: number;
+  nonce?: string;
+  serverSalt?: string | null;
 }
 
 export interface LoginPayload {

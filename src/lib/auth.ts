@@ -5,7 +5,7 @@ import { SystemSettingsModel } from "../models/systemSettings";
 export { getRequestCoordinates, calculateDistanceInKm } from "../utils/geo";
 
 // Re-export Crypto Utilities
-export { generateId } from "../utils/crypto";
+export { generateId, extractSaltHex, hmacSha256 } from "../utils/crypto";
 
 // Re-export Cookie Management
 export {

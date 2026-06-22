@@ -9,7 +9,8 @@ import {
   recordFailedPreauthAttempt,
   getRequestCoordinates,
   createCsrfCookie,
-  getOrCreateJwtSecret, rotateSession, parseRefreshTokenString
+  getOrCreateJwtSecret, rotateSession, parseRefreshTokenString,
+  extractSaltHex, hmacSha256
 } from "../../lib/auth";
 import { importJwtSecret, signJWT } from "../../lib/jwt";
 import { verifyPassword } from "../../utils/crypto";
@@ -64,7 +65,23 @@ export async function handleAuthSessionRequest(request: Request, env: Env): Prom
     const requires_totp = !!user.totp_enabled;
     const password_version = user.password_version ?? 1;
 
-    return new Response(JSON.stringify({ requires_password, requires_totp, password_version }), {
+    // Generate nonce for Step 2 challenge-response verification
+    const nonce = generateId(32);
+    let serverSalt: string | null = null;
+    if (password_version === 2 && user.hashed_password) {
+      serverSalt = extractSaltHex(user.hashed_password);
+    }
+
+    const preauthTtl = Number(env.PREAUTH_TTL_SECONDS) || 300;
+    await cacheUtils.set(cache, `preauth_state:${preauthToken}`, { nonce, failedAttempts: 0 }, preauthTtl);
+
+    return new Response(JSON.stringify({
+      requires_password,
+      requires_totp,
+      password_version,
+      nonce,
+      serverSalt
+    }), {
       headers: {
         "Set-Cookie": preauthCookie,
         "Content-Type": "application/json"
@@ -87,6 +104,13 @@ export async function handleAuthSessionRequest(request: Request, env: Env): Prom
     const userId = await validatePreauthSession(env, preauthToken);
     if (!userId) return new Response("Session expired, please start over", { status: 401 });
 
+    const preauthState = await cacheUtils.get<{ nonce: string, failedAttempts: number }>(cache, `preauth_state:${preauthToken}`);
+    if (!preauthState) {
+      await invalidatePreauthSession(env, preauthToken);
+      return new Response("Session expired, please start over", { status: 401 });
+    }
+    const { nonce } = preauthState;
+
     const user = await userModel.getById(userId);
     if (!user) return new Response("User not found", { status: 404 });
 
@@ -95,19 +119,32 @@ export async function handleAuthSessionRequest(request: Request, env: Env): Prom
     let needsMigration = false;
     // 验证密码
     if (!user.totp_skip_password) {
-      const passwordValid = await verifyPassword(password, user.hashed_password, user.password_version ?? 1);
-      if (!passwordValid) {
-        await cacheUtils.isRateLimited(cache, `login_fail:${clientIp}`, 100, 900);
-        await activityLog.record(userId, 'login_fail', clientIp, userAgent, { reason: 'wrong_password' });
-        const remaining = await recordFailedPreauthAttempt(cache, preauthToken, env);
-        if (remaining <= 0) {
-          return new Response("Invalid password", { status: 400 });
-        } else {
-          return new Response(`Invalid password. ${remaining} attempt${remaining > 1 ? 's' : ''} remaining.`, { status: 400 });
+      if ((user.password_version ?? 1) === 2) {
+        // Nonce challenge-response validation
+        const expectedResponse = await hmacSha256(user.hashed_password, nonce);
+        if (password !== expectedResponse) {
+          await cacheUtils.isRateLimited(cache, `login_fail:${clientIp}`, 100, 900);
+          await activityLog.record(userId, 'login_fail', clientIp, userAgent, { reason: 'wrong_password' });
+          const remaining = await recordFailedPreauthAttempt(cache, preauthToken, env);
+          if (remaining <= 0) {
+            return new Response("Invalid password", { status: 400 });
+          } else {
+            return new Response(`Invalid password. ${remaining} attempt${remaining > 1 ? 's' : ''} remaining.`, { status: 400 });
+          }
         }
-      }
-
-      if ((user.password_version ?? 1) === 1) {
+      } else {
+        // Plaintext validation (v1)
+        const passwordValid = await verifyPassword(password, user.hashed_password, 1);
+        if (!passwordValid) {
+          await cacheUtils.isRateLimited(cache, `login_fail:${clientIp}`, 100, 900);
+          await activityLog.record(userId, 'login_fail', clientIp, userAgent, { reason: 'wrong_password' });
+          const remaining = await recordFailedPreauthAttempt(cache, preauthToken, env);
+          if (remaining <= 0) {
+            return new Response("Invalid password", { status: 400 });
+          } else {
+            return new Response(`Invalid password. ${remaining} attempt${remaining > 1 ? 's' : ''} remaining.`, { status: 400 });
+          }
+        }
         needsMigration = true;
       }
     }
@@ -153,6 +190,7 @@ export async function handleAuthSessionRequest(request: Request, env: Env): Prom
 
     // 所有验证通过，已消耗 preauthToken 颁发正式 Session
     await invalidatePreauthSession(env, preauthToken);
+    await cacheUtils.delete(cache, `preauth_state:${preauthToken}`);
     await cacheUtils.delete(cache, `ratelimit:login_fail:${clientIp}`);
     await activityLog.record(userId, 'login_success', clientIp, userAgent);
 
