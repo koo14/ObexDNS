@@ -57,23 +57,10 @@ export async function getCurrentUser(request: Request, env: Env): Promise<User |
         return null;
       }
 
-      // Check idle timeout
       const now = Math.floor(Date.now() / 1000);
-      const idleTimeoutMin = Number(env.SESSION_IDLE_TIMEOUT_MINUTES) || 60;
-      const idleTimeoutSec = idleTimeoutMin * 60;
       const lastActive = session.last_active_at || session.created_at;
 
-      let isPaused = !!session.is_paused;
-      if (!isPaused && (now - lastActive > idleTimeoutSec)) {
-        const userModel = new UserModel(env.DB);
-        const dbUser = await userModel.getById(payload.userId);
-        if (dbUser && dbUser.pin_hash) {
-          await sessionModel.pauseSession(session.id);
-          isPaused = true;
-        }
-      }
-
-      if (isPaused) {
+      if (session.is_paused) {
         return { id: payload.userId, username: "", role: payload.role as any, isPaused: true, sessionId: payload.sessionId };
       }
 

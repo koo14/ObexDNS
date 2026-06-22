@@ -90,33 +90,4 @@ export class SessionModel {
     return result.success;
   }
 
-  async cleanupExpired(now: number, idleTimeoutSec: number = 3600): Promise<void> {
-    try {
-      // 1. For active idle sessions whose users have Session Lock enabled (pin_hash is set), pause them.
-      await this.db.prepare(`
-        UPDATE sessions
-        SET is_paused = 1
-        WHERE is_paused = 0
-          AND COALESCE(last_active_at, created_at) < ?
-          AND EXISTS (
-            SELECT 1 FROM users
-            WHERE users.id = sessions.user_id
-              AND users.pin_hash IS NOT NULL
-          )
-      `).bind(now - idleTimeoutSec).run();
-
-      // 2. Delete sessions that have exceeded their absolute expiration time.
-      await this.db.prepare(`
-        DELETE FROM sessions 
-        WHERE expires_at < ?
-      `).bind(now).run();
-    } catch (e) {
-      console.error("[Cron] Expired sessions cleanup failed:", e);
-    }
-    try {
-      await this.db.prepare("DELETE FROM pending_totp_sessions WHERE expires_at < ?").bind(now).run();
-    } catch (e) {
-      console.error("[Cron] Expired pending TOTP sessions cleanup failed:", e);
-    }
-  }
 }

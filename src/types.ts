@@ -8,7 +8,6 @@ export interface Env {
   DEFAULT_SESSION_EXPIRATION_MINUTES?: string | number;
   OPTIONAL_SESSION_EXPIRATION_DAYS?: string | number;
   ACCESS_TOKEN_EXPIRATION_MINUTES?: string | number;
-  SESSION_IDLE_TIMEOUT_MINUTES?: string | number;
   SESSION_GEO_DISTANCE_KM?: string | number;
   PREAUTH_TTL_SECONDS?: string | number;
   BLOOM_MEM_TTL?: string | number;
