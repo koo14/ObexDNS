@@ -58,6 +58,11 @@ export function useAuth(toasterRef: React.RefObject<OverlayToaster | null>) {
         }
         setIsLoggedIn(true);
       } catch (err: any) {
+        if (err instanceof ApiError && err.status === 403 && err.bodyText === "session_paused") {
+          setIsLoggedIn(true);
+          window.dispatchEvent(new Event("session_paused"));
+          return;
+        }
         if (err instanceof ApiError && err.status === 401) {
           clearCsrfToken();
         }

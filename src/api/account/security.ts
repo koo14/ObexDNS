@@ -143,5 +143,46 @@ export async function handleSecurityRequest(
     }
   }
 
+  // ─── PIN 管理接口 (/api/account/pin) ───
+  if (action === 'pin') {
+    const dbUser = await userModel.getById(user.id);
+    if (!dbUser) return new Response("User not found", { status: 404 });
+
+    const body = await request.json() as any;
+    const { password, totpTokenHash, totpSalt } = body;
+
+    // 验证用户身份 (密码或 TOTP)
+    let authenticated = false;
+    if (totpTokenHash && dbUser.totp_enabled && dbUser.totp_secret) {
+      authenticated = await verifyTOTP(dbUser.totp_secret, totpTokenHash, totpSalt);
+      if (!authenticated) {
+        return new Response("Invalid TOTP code", { status: 400 });
+      }
+    } else if (password) {
+      authenticated = await verifyPassword(password, dbUser.hashed_password, dbUser.password_version ?? 1);
+      if (!authenticated) {
+        return new Response("Incorrect password", { status: 400 });
+      }
+    } else {
+      return new Response("Authentication required", { status: 400 });
+    }
+
+    if (request.method === 'POST') {
+      const { pinHash } = body;
+      // 验证 PIN 格式是否为 64 位十六进制哈希
+      if (!pinHash || !/^[a-fA-F0-9]{64}$/.test(pinHash)) {
+        return new Response("Invalid PIN hash format", { status: 400 });
+      }
+
+      await userModel.updatePinHash(user.id, pinHash);
+      return new Response(JSON.stringify({ success: true }));
+    }
+
+    if (request.method === 'DELETE') {
+      await userModel.updatePinHash(user.id, null);
+      return new Response(JSON.stringify({ success: true }));
+    }
+  }
+
   return new Response("Not Found", { status: 404 });
 }

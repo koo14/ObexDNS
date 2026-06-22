@@ -31,6 +31,7 @@ export async function handleMeRequest(
         timezone: dbUser?.timezone || null,
         locale: dbUser?.locale || "en-US",
         password_version: dbUser?.password_version ?? 1,
+        pin_enabled: !!(dbUser?.pin_hash),
       }), { headers: { 'Content-Type': 'application/json' } });
     }
 

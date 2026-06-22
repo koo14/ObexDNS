@@ -65,6 +65,11 @@ export class UserModel {
     return result.success;
   }
 
+  async updatePinHash(id: string, pinHash: string | null): Promise<boolean> {
+    const result = await this.db.prepare("UPDATE users SET pin_hash = ? WHERE id = ?").bind(pinHash, id).run();
+    return result.success;
+  }
+
   async delete(id: string): Promise<boolean> {
     const result = await this.db.prepare("DELETE FROM users WHERE id = ?").bind(id).run();
     return result.success;

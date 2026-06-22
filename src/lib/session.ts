@@ -1,5 +1,6 @@
 import { Env, User } from '../types';
 import { SessionModel } from '../models/session';
+import { UserModel } from '../models/user';
 import { generateId } from '../utils/crypto';
 import { base64urlEncode, base64urlDecode } from './jwt';
 import { calculateDistanceInKm } from '../utils/geo';
@@ -15,6 +16,7 @@ export interface Session {
   longitude?: number | null;
   rotation_counter?: number;
   last_active_at?: number | null;
+  is_paused?: number;
 }
 
 export interface SessionValidationResult {
@@ -134,7 +136,8 @@ export async function rotateSession(
     latitude: result.latitude,
     longitude: result.longitude,
     rotation_counter: result.rotation_counter,
-    last_active_at: result.last_active_at
+    last_active_at: result.last_active_at,
+    is_paused: result.is_paused
   };
 
   const user: User = {
@@ -161,9 +164,16 @@ export async function rotateSession(
   const idleTimeoutMin = Number(env.SESSION_IDLE_TIMEOUT_MINUTES) || 60;
   const idleTimeoutSec = idleTimeoutMin * 60;
   const lastActive = session.last_active_at || session.created_at;
-  if (now - lastActive > idleTimeoutSec) {
-    await invalidateSession(env, session.id);
-    return { session: null, user, newRefreshToken: null, reason: "idle_timeout" };
+
+  let isPaused = !!session.is_paused;
+  if (!isPaused && (now - lastActive > idleTimeoutSec)) {
+    const userModel = new UserModel(env.DB);
+    const dbUser = await userModel.getById(user.id);
+    if (dbUser && dbUser.pin_hash) {
+      await sessionModel.pauseSession(session.id);
+      isPaused = true;
+      session.is_paused = 1;
+    }
   }
 
   // Strict Geolocation Check
@@ -197,7 +207,9 @@ export async function rotateSession(
 
   // Rotate the token
   await sessionModel.incrementRotationCounter(session.id);
-  await sessionModel.updateLastActive(session.id, now);
+  if (!session.is_paused) {
+    await sessionModel.updateLastActive(session.id, now);
+  }
   const newCounter = (session.rotation_counter || 0) + 1;
   const newRefreshToken = createRefreshTokenString(session.id, newCounter);
 

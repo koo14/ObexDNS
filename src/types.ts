@@ -36,6 +36,9 @@ export interface User {
   timezone?: string | null;
   locale?: string | null;
   password_version?: number;
+  pin_hash?: string | null;
+  isPaused?: boolean;
+  sessionId?: string;
 }
 
 export interface UserActivityLog {

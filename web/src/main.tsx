@@ -73,6 +73,18 @@ window.fetch = async function (input, init) {
   
   let response = await originalFetch(input, init);
 
+  if (isApi && response.status === 403 && !url.includes("/api/auth/")) {
+    try {
+      const cloned = response.clone();
+      const text = await cloned.text();
+      if (text === "session_paused") {
+        window.dispatchEvent(new Event("session_paused"));
+      }
+    } catch (e) {
+      // Ignore reading errors
+    }
+  }
+
   if (isApi && response.status === 401 && !url.includes("/api/auth/")) {
     if (!isRefreshing) {
       isRefreshing = true;

@@ -2,6 +2,7 @@ import { Env, User } from '../types';
 import { getOrCreateJwtSecret, readCsrfCookie } from './auth';
 import { importJwtSecret, verifyJWT } from './jwt';
 import { SessionModel } from '../models/session';
+import { UserModel } from '../models/user';
 
 /**
  * Applies standard security headers and Content-Security-Policy (CSP) with a nonce.
@@ -62,10 +63,18 @@ export async function getCurrentUser(request: Request, env: Env): Promise<User |
       const idleTimeoutSec = idleTimeoutMin * 60;
       const lastActive = session.last_active_at || session.created_at;
 
-      if (now - lastActive > idleTimeoutSec) {
-        // Invalidate the session immediately on idle timeout
-        await sessionModel.deleteSession(session.id);
-        return null;
+      let isPaused = !!session.is_paused;
+      if (!isPaused && (now - lastActive > idleTimeoutSec)) {
+        const userModel = new UserModel(env.DB);
+        const dbUser = await userModel.getById(payload.userId);
+        if (dbUser && dbUser.pin_hash) {
+          await sessionModel.pauseSession(session.id);
+          isPaused = true;
+        }
+      }
+
+      if (isPaused) {
+        return { id: payload.userId, username: "", role: payload.role as any, isPaused: true, sessionId: payload.sessionId };
       }
 
       // Throttle DB updates: only update if at least 10 seconds have elapsed since last active time
@@ -73,7 +82,7 @@ export async function getCurrentUser(request: Request, env: Env): Promise<User |
         await sessionModel.updateLastActive(session.id, now);
       }
 
-      return { id: payload.userId, username: "", role: payload.role as any };
+      return { id: payload.userId, username: "", role: payload.role as any, sessionId: payload.sessionId };
     }
   } catch (e) {
     // Ignore verification errors and return null

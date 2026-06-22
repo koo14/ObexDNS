@@ -15,7 +15,7 @@ export class SessionModel {
 
   async getSessionWithUser(sessionId: string): Promise<any> {
     return await this.db.prepare(`
-      SELECT sessions.id as session_id, sessions.user_id, sessions.created_at, sessions.expires_at, sessions.ip_address, sessions.user_agent, sessions.latitude, sessions.longitude, sessions.rotation_counter, sessions.last_active_at,
+      SELECT sessions.id as session_id, sessions.user_id, sessions.created_at, sessions.expires_at, sessions.ip_address, sessions.user_agent, sessions.latitude, sessions.longitude, sessions.rotation_counter, sessions.last_active_at, sessions.is_paused,
              users.id as u_id, users.username, users.role
       FROM sessions
       INNER JOIN users ON sessions.user_id = users.id
@@ -31,6 +31,18 @@ export class SessionModel {
 
   async updateLastActive(id: string, lastActiveAt: number): Promise<boolean> {
     const result = await this.db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?")
+      .bind(lastActiveAt, id).run();
+    return result.success;
+  }
+
+  async pauseSession(id: string): Promise<boolean> {
+    const result = await this.db.prepare("UPDATE sessions SET is_paused = 1 WHERE id = ?")
+      .bind(id).run();
+    return result.success;
+  }
+
+  async resumeSession(id: string, lastActiveAt: number): Promise<boolean> {
+    const result = await this.db.prepare("UPDATE sessions SET is_paused = 0, last_active_at = ? WHERE id = ?")
       .bind(lastActiveAt, id).run();
     return result.success;
   }
@@ -80,8 +92,24 @@ export class SessionModel {
 
   async cleanupExpired(now: number, idleTimeoutSec: number = 3600): Promise<void> {
     try {
-      await this.db.prepare("DELETE FROM sessions WHERE expires_at < ? OR COALESCE(last_active_at, created_at) < ?")
-        .bind(now, now - idleTimeoutSec).run();
+      // 1. For active idle sessions whose users have Session Lock enabled (pin_hash is set), pause them.
+      await this.db.prepare(`
+        UPDATE sessions
+        SET is_paused = 1
+        WHERE is_paused = 0
+          AND COALESCE(last_active_at, created_at) < ?
+          AND EXISTS (
+            SELECT 1 FROM users
+            WHERE users.id = sessions.user_id
+              AND users.pin_hash IS NOT NULL
+          )
+      `).bind(now - idleTimeoutSec).run();
+
+      // 2. Delete sessions that have exceeded their absolute expiration time.
+      await this.db.prepare(`
+        DELETE FROM sessions 
+        WHERE expires_at < ?
+      `).bind(now).run();
     } catch (e) {
       console.error("[Cron] Expired sessions cleanup failed:", e);
     }
