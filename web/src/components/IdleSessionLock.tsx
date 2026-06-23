@@ -110,15 +110,19 @@ export const IdleSessionLock: React.FC<IdleSessionLockProps> = ({
         return;
       }
       // Get challenge nonce from server
-      const { nonce } = await getUnlockNonce();
+      const { nonce, legacy } = await getUnlockNonce();
 
       // Compute pinHash = hashPin(pinToSubmit, userId)
       const pinHash = await hashPin(pinToSubmit, userId);
 
-      // Compute challengedHash = hashPin(pinHash, nonce)
-      const challengedHash = await hashPin(pinHash, nonce);
-
-      await unlockSession(challengedHash, nonce);
+      if (legacy) {
+        // Legacy flow: send the raw pinHash directly (server will verify and auto-migrate)
+        await unlockSession(pinHash, nonce);
+      } else {
+        // Modern challenge-response flow
+        const challengedHash = await hashPin(pinHash, nonce);
+        await unlockSession(challengedHash, nonce);
+      }
       
       // Success! Unlock session
       setIsLocked(false);
