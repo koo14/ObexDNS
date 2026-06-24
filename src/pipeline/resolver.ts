@@ -42,17 +42,21 @@ export const pipelineResolver = {
     }
 
     try {
+      // \u89e3\u6790\u7ecf\u5178 DNS \u7684 host \u548c port\uff0c\u63d0\u5347\u5230\u5916\u5c42\u4f9b diagnostics \u4f7f\u7528
+      let tcpHost = '';
+      let tcpPort = 53;
+
       if (isClassicDns) {
         // 经典 DNS 处理 (通过 TCP Socket)
-        let host = upstreamUrl.replace('tcp://', '');
-        let port = 53;
-        if (host.includes(':')) {
-          const parts = host.split(':');
-          host = parts[0];
-          port = parseInt(parts[1]) || 53;
+        // 去除 tcp:// 前缀和裸 IP 均可正确解析
+        tcpHost = upstreamUrl.replace(/^tcp:\/\//, '');
+        if (tcpHost.includes(':')) {
+          const parts = tcpHost.split(':');
+          tcpHost = parts[0];
+          tcpPort = parseInt(parts[1]) || 53;
         }
 
-        const socket = connect({ hostname: host, port: port });
+        const socket = connect({ hostname: tcpHost, port: tcpPort });
         const writer = socket.writable.getWriter();
         const reader = socket.readable.getReader();
 
@@ -146,7 +150,7 @@ export const pipelineResolver = {
         latency: Date.now() - context.startTime, 
         timings: { upstream_fetch: upstreamLatency },
         diagnostics: {
-          upstream_url: isClassicDns ? `tcp://${upstreamUrl}` : upstreamUrl,
+          upstream_url: isClassicDns ? `tcp://${tcpHost}:${tcpPort}` : upstreamUrl,
           method: isClassicDns ? "TCP" : "GET",
           status: 200
         }
