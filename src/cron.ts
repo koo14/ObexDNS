@@ -5,6 +5,7 @@ import { UserModel } from './models/user';
 import { SessionModel } from './models/session';
 import { ProfileModel } from './models/profile';
 import { syncProfileLists } from './utils/sync';
+import { cacheUtils } from './utils/cache';
 
 /**
  * Handles cron-scheduled events to run background cleanups and list synchronization.
@@ -40,14 +41,21 @@ export async function handleScheduled(
       const syncIntervalSec = Number(env.SYNC_PROFILE_INTERVAL_SEC) || 86400;
       const cutoffTime = now - syncIntervalSec;
       const profileModel = new ProfileModel(env.DB);
-      const batchSize = Number(env.SYNC_BATCH_SIZE) || 3;
+      const batchSize = Number(env.SYNC_BATCH_SIZE) || 1;
       const syncTargets = await profileModel.getSyncTargets(cutoffTime, batchSize);
 
-      for (const target of syncTargets) {
-        ctx.waitUntil(syncProfileLists(target.id, env, ctx));
-      }
+      // Synchronize external filter blocklists sequentially to avoid CPU limit exhaustion
       if (syncTargets.length > 0) {
-        console.log(`[Cron] Scheduled sync for ${syncTargets.length} profiles.`);
+        ctx.waitUntil((async () => {
+          for (const target of syncTargets) {
+            try {
+              await syncProfileLists(target.id, env, ctx);
+            } catch (err: any) {
+              console.error(`[Cron] Sync failed for profile ${target.id}:`, err.message || err);
+            }
+          }
+        })());
+        console.log(`[Cron] Scheduled sequential sync for ${syncTargets.length} profiles.`);
       }
     } catch (e) {
       console.error("[Cron] List sync scheduling failed:", e);
