@@ -409,7 +409,8 @@
     "export": "設定をエクスポート",
     "exportSuccess": "設定をエクスポートしました",
     "exportError": "設定のエクスポートに失敗しました。しばらくしてからもう一度お試しください",
-    "nameUpdateSuccess": "設定名を更新しました"
+    "nameUpdateSuccess": "設定名を更新しました",
+    "saving": "保存中..."
   },
   "account": {
     "title": "アカウント設定",

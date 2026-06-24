@@ -409,7 +409,8 @@
     "export": "설정 내보내기",
     "exportSuccess": "설정을 성공적으로 내보냈습니다",
     "exportError": "설정 내보내기 실패, 나중에 다시 시도하세요",
-    "nameUpdateSuccess": "설정 이름이 업데이트되었습니다"
+    "nameUpdateSuccess": "설정 이름이 업데이트되었습니다",
+    "saving": "저장 중..."
   },
   "account": {
     "title": "계정 설정",

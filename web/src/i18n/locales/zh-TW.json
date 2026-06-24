@@ -410,7 +410,8 @@
     "export": "匯出配置",
     "exportSuccess": "配置成功匯出",
     "exportError": "配置匯出失敗，請稍後再試",
-    "nameUpdateSuccess": "配置名稱已更新"
+    "nameUpdateSuccess": "配置名稱已更新",
+    "saving": "正在儲存..."
   },
   "account": {
     "title": "帳號設定",

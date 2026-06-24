@@ -409,7 +409,8 @@
     "export": "Exporter la configuration",
     "exportSuccess": "Configuration exportée avec succès",
     "exportError": "Échec de l'exportation. Veuillez réessayer plus tard",
-    "nameUpdateSuccess": "Nom du profil mis à jour"
+    "nameUpdateSuccess": "Nom du profil mis à jour",
+    "saving": "Enregistrement en cours..."
   },
   "account": {
     "title": "Paramètres du compte",

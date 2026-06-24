@@ -410,7 +410,8 @@
     "export": "Export Config",
     "exportSuccess": "Config exported successfully",
     "exportError": "Export failed",
-    "nameUpdateSuccess": "Profile name updated"
+    "nameUpdateSuccess": "Profile name updated",
+    "saving": "Saving..."
   },
   "account": {
     "title": "Account Settings",
