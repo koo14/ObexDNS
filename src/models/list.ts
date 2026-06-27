@@ -27,4 +27,13 @@ export class ListModel {
       .run();
     return result.success;
   }
+
+  async resetListSyncStatus(profileId: string): Promise<boolean> {
+    const result = await this.db.prepare(
+      "UPDATE lists SET last_synced_at = 0 WHERE profile_id = ?"
+    )
+      .bind(profileId)
+      .run();
+    return result.success;
+  }
 }
