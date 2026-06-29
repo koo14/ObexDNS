@@ -30,12 +30,21 @@ export async function handleMeRequest(
         totp_skip_password: !!(dbUser?.totp_skip_password),
         timezone: dbUser?.timezone || null,
         locale: dbUser?.locale || "en-US",
+        password_version: dbUser?.password_version ?? 1,
+        pin_enabled: !!(dbUser?.pin_hash),
+        session_lock_timeout: dbUser?.session_lock_timeout ?? 15,
+        max_log_retention_days: user.role === 'admin' ? Number(env.ADMIN_USER_MAX_LOG_RETENTION_DAYS) || 30 : Number(env.NORMAL_USER_MAX_LOG_RETENTION_DAYS) || 7,
       }), { headers: { 'Content-Type': 'application/json' } });
     }
 
     if (request.method === 'PATCH') {
       const body = await request.json() as any;
       try {
+        if (body.session_lock_timeout !== undefined) {
+          const timeout = Number(body.session_lock_timeout);
+          await userModel.updateSessionLockTimeout(user.id, timeout);
+        }
+
         if (body.username !== undefined) {
           const newUsername = body.username;
           if (!newUsername || !USERNAME_REGEX.test(newUsername)) {

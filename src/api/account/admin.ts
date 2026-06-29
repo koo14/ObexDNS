@@ -33,10 +33,10 @@ export async function handleAdminRequest(
       if (!password || !PASSWORD_REGEX.test(password)) {
         return new Response("Password format error", { status: 400 });
       }
-      const hashedPassword = await hashPassword(password);
+      const hashedPassword = await hashPassword(password, 2);
       const userId = generateId(15);
       try {
-        await userModel.create({ id: userId, username, passwordHash: hashedPassword, role: role || 'user' });
+        await userModel.create({ id: userId, username, passwordHash: hashedPassword, role: role || 'user', passwordVersion: 2 });
         return new Response(JSON.stringify({ id: userId }), { status: 201 });
       } catch (e: any) {
         return new Response(e.message, { status: 400 });
@@ -57,10 +57,14 @@ export async function handleAdminRequest(
     const systemSettings = new SystemSettingsModel(env.DB);
     if (request.method === 'GET') {
       const settings = await systemSettings.getAll();
+      // 敏感配置脱敏，jwt_secret 绝不能暴露给外部/客户端
+      delete settings.jwt_secret;
       return new Response(JSON.stringify(settings), { headers: { 'Content-Type': 'application/json' } });
     }
     if (request.method === 'PATCH') {
       const body = await request.json() as Record<string, string>;
+      // 禁止修改/覆盖敏感的 jwt_secret
+      delete body.jwt_secret;
       await systemSettings.setMany(body);
       return new Response(JSON.stringify({ success: true }));
     }

@@ -3,15 +3,19 @@ import { useTranslation } from "react-i18next";
 import {
   validateUsername,
   isPasswordLeaked,
-  hashTotpToken
+  hashTotpToken,
+  hashPasswordClient,
+  deriveStoredHashClient,
+  hmacSha256
 } from "../../utils/auth";
 import { setAccessToken } from "../../utils/token";
-import { prelogin, login, ApiError } from "../../services";
+import { prelogin, login, ApiError, migratePassword } from "../../services";
 
 interface AuthConfig {
   turnstile_site_key: string;
   turnstile_enabled_signup: boolean;
   turnstile_enabled_login: boolean;
+  optional_session_expiration_days?: number;
 }
 
 export interface UseLoginFormProps {
@@ -38,6 +42,10 @@ export const useLoginForm = ({
   const [password, setPassword] = useState("");
   const [totpToken, setTotpToken] = useState("");
   const [recoveryKey, setRecoveryKey] = useState("");
+  const [keepLoggedIn, setKeepLoggedIn] = useState(false);
+  const [passwordVersion, setPasswordVersion] = useState<number>(1);
+  const [nonce, setNonce] = useState<string | undefined>(undefined);
+  const [serverSalt, setServerSalt] = useState<string | null | undefined>(undefined);
 
   // Server response step requirements
   const [requiresPassword, setRequiresPassword] = useState(true);
@@ -131,6 +139,9 @@ export const useLoginForm = ({
       const data = await prelogin({ username, turnstileToken });
       setRequiresPassword(data.requires_password);
       setRequiresTotp(data.requires_totp);
+      setPasswordVersion(data.password_version ?? 1);
+      setNonce(data.nonce);
+      setServerSalt(data.serverSalt);
       setLoginStep(2);
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -156,8 +167,22 @@ export const useLoginForm = ({
         recoveryKey?: string;
         totpTokenHash?: string;
         totpSalt?: string;
-      } = {};
-      if (requiresPassword) body.password = password;
+        keepLoggedIn?: boolean;
+      } = {
+        keepLoggedIn
+      };
+      if (requiresPassword) {
+        if (passwordVersion === 2) {
+          if (!nonce || !serverSalt) {
+            throw new Error(t("auth.sessionExpired", "Session expired, please start over"));
+          }
+          const clientHash = await hashPasswordClient(password, username);
+          const storedHash = await deriveStoredHashClient(clientHash, serverSalt);
+          body.password = await hmacSha256(storedHash, nonce);
+        } else {
+          body.password = password;
+        }
+      }
       if (requiresTotp) {
         if (useRecovery) {
           body.recoveryKey = recoveryKey;
@@ -172,6 +197,10 @@ export const useLoginForm = ({
       const data = await login(body);
       if (data.accessToken) {
         setAccessToken(data.accessToken);
+      }
+      if (data.needsMigration) {
+        const clientHash = await hashPasswordClient(password, username);
+        await migratePassword(clientHash);
       }
       onSuccess();
     } catch (err: any) {
@@ -200,6 +229,8 @@ export const useLoginForm = ({
     setError("");
     setTurnstileToken(null);
     setUseRecovery(false);
+    setNonce(undefined);
+    setServerSalt(undefined);
   };
 
   return {
@@ -222,6 +253,8 @@ export const useLoginForm = ({
     turnstileStatus,
     turnstileRef,
     isTurnstileEnabled,
+    keepLoggedIn,
+    setKeepLoggedIn,
     handleStep1Submit,
     handleStep2Submit,
     resetToStep1

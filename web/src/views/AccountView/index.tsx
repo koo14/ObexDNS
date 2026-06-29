@@ -3,6 +3,7 @@ import { Divider, Tag, Intent } from "@blueprintjs/core";
 import { ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
+import { hashPasswordClient } from "../../utils/auth";
 
 import type { UserInfo } from "./types";
 import {
@@ -20,6 +21,7 @@ import { SystemSettingsCard } from "./components/SystemSettingsCard";
 import { DangerZoneCard } from "./components/DangerZoneCard";
 import { PersonalInfoCard } from "./components/PersonalInfoCard";
 import { ChangePasswordCard } from "./components/ChangePasswordCard";
+import { SessionLockCard } from "./components/SessionLockCard";
 import { PASSWORD_REGEX, USERNAME_REGEX } from "../../utils/auth";
 import { useIsMobile } from "../../hooks/useIsMobile";
 
@@ -34,6 +36,7 @@ export const AccountView: React.FC = () => {
   const [me, setMe] = useState<UserInfo | null>(null);
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
   const { t, i18n } = useTranslation();
   const isMobile = useIsMobile();
 
@@ -156,11 +159,22 @@ export const AccountView: React.FC = () => {
           .join("");
       }
 
+      if (!me) throw new Error("User information not loaded");
+
+      let oldPasswordPayload = oldPassword;
+      if (!useTotpForPw && oldPassword) {
+        if ((me.password_version ?? 1) === 2) {
+          oldPasswordPayload = await hashPasswordClient(oldPassword, me.username);
+        }
+      }
+
+      const newPasswordPayload = await hashPasswordClient(newPassword, me.username);
+
       await updatePassword({
-        oldPassword: useTotpForPw ? undefined : oldPassword,
+        oldPassword: useTotpForPw ? undefined : oldPasswordPayload,
         totpTokenHash: tokenPayload,
         totpSalt: saltPayload,
-        newPassword
+        newPassword: newPasswordPayload
       });
 
       setPwMessage({
@@ -242,11 +256,24 @@ export const AccountView: React.FC = () => {
       {/* TOTP 2FA */}
       {me && <TOTPCard user={me} onRefresh={fetchMe} />}
 
+      {/* Session Lock */}
+      {me && <SessionLockCard user={me} onRefresh={fetchMe} />}
+
       {/* Active Sessions */}
-      {me && <ActiveSessionsCard />}
+      {me && (
+        <ActiveSessionsCard
+          hoveredSessionId={hoveredSessionId}
+          setHoveredSessionId={setHoveredSessionId}
+        />
+      )}
 
       {/* Activity Log */}
-      {me && <ActivityLogCard />}
+      {me && (
+        <ActivityLogCard
+          hoveredSessionId={hoveredSessionId}
+          setHoveredSessionId={setHoveredSessionId}
+        />
+      )}
 
       {/* Admin: User Management */}
       {me?.role === "admin" && (

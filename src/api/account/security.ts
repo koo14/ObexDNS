@@ -1,5 +1,5 @@
 import { Env, User, ExecutionContext } from "../../types";
-import { hashPassword, verifyPassword } from "../../utils/crypto";
+import { hashPassword, verifyPassword, generateSessionHash } from "../../utils/crypto";
 import { generateTOTPSecret, getTOTPUri, generateRecoveryKeys, hashRecoveryKey, verifyTOTP } from "../../lib/totp";
 import { UserModel } from "../../models/user";
 import { ActivityLogModel } from "../../models/activityLog";
@@ -21,6 +21,8 @@ export async function handleSecurityRequest(
   const userAgent = request.headers.get("User-Agent");
   const action = pathParts[2];
 
+  const sessionHash = user.sessionId ? await generateSessionHash(user.sessionId, user.id) : null;
+
   // POST /api/account/password (password change)
   if (action === 'password' && request.method === 'POST') {
     const { oldPassword, totpTokenHash, totpSalt, newPassword } = await request.json() as any;
@@ -36,15 +38,15 @@ export async function handleSecurityRequest(
     if (totpTokenHash && dbUser.totp_enabled && dbUser.totp_secret) {
       authenticated = await verifyTOTP(dbUser.totp_secret, totpTokenHash, totpSalt);
       if (!authenticated) {
-        await activityLog.record(user.id, 'password_change_fail', clientIp, userAgent, { reason: 'invalid_totp' });
+        await activityLog.record(user.id, 'password_change_fail', clientIp, userAgent, { reason: 'invalid_totp' }, sessionHash);
         return new Response("Invalid TOTP code", { status: 400 });
       }
     } 
     // 否则使用旧密码校验
     else if (oldPassword) {
-      authenticated = await verifyPassword(oldPassword, dbUser.hashed_password);
+      authenticated = await verifyPassword(oldPassword, dbUser.hashed_password, dbUser.password_version ?? 1);
       if (!authenticated) {
-        await activityLog.record(user.id, 'password_change_fail', clientIp, userAgent, { reason: 'wrong_current_password' });
+        await activityLog.record(user.id, 'password_change_fail', clientIp, userAgent, { reason: 'wrong_current_password' }, sessionHash);
         return new Response("Current password is incorrect", { status: 400 });
       }
     } 
@@ -52,10 +54,30 @@ export async function handleSecurityRequest(
       return new Response("Authentication required (Old Password or TOTP)", { status: 400 });
     }
 
-    const hashedPassword = await hashPassword(newPassword);
-    await userModel.updatePassword(user.id, hashedPassword);
-    await activityLog.record(user.id, 'password_change_success', clientIp, userAgent, { method: totpTokenHash ? 'totp' : 'password' });
+    const hashedPassword = await hashPassword(newPassword, 2);
+    await userModel.updatePassword(user.id, hashedPassword, 2);
+    await activityLog.record(user.id, 'password_change_success', clientIp, userAgent, { method: totpTokenHash ? 'totp' : 'password' }, sessionHash);
     return new Response(JSON.stringify({ success: true }));
+  }
+
+  // POST /api/account/migrate-password (password migration to v2)
+  if (action === 'migrate-password' && request.method === 'POST') {
+    const { clientHash } = await request.json() as any;
+    if (!clientHash) {
+      return new Response("Missing clientHash", { status: 400 });
+    }
+    const dbUser = await userModel.getById(user.id);
+    if (!dbUser) return new Response("User not found", { status: 404 });
+
+    if ((dbUser.password_version ?? 1) === 1) {
+      const hashedPassword = await hashPassword(clientHash, 2);
+      await userModel.updatePassword(user.id, hashedPassword, 2);
+      await activityLog.record(user.id, 'password_change_success', clientIp, userAgent, { method: 'migration' }, sessionHash);
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   // ─── TOTP 管理接口 (/api/account/totp/...) ───
@@ -86,7 +108,7 @@ export async function handleSecurityRequest(
       const hashedKeys = await Promise.all(plaintextKeys.map(hashRecoveryKey));
 
       await userModel.updateTOTP(user.id, secret, hashedKeys);
-      await activityLog.record(user.id, 'totp_setup', clientIp, userAgent);
+      await activityLog.record(user.id, 'totp_setup', clientIp, userAgent, undefined, sessionHash);
 
       return new Response(JSON.stringify({ success: true, recovery_keys: plaintextKeys }), {
         headers: { 'Content-Type': 'application/json' }
@@ -112,13 +134,55 @@ export async function handleSecurityRequest(
       // If the user is in skip_password mode, they may not have a usable password — allow
       // them to disable via TOTP token instead
       if (!dbUser.totp_skip_password) {
-        if (!password || !(await verifyPassword(password, dbUser.hashed_password))) {
+        if (!password || !(await verifyPassword(password, dbUser.hashed_password, dbUser.password_version ?? 1))) {
           return new Response("Incorrect password", { status: 400 });
         }
       }
 
       await userModel.removeTOTP(user.id);
-      await activityLog.record(user.id, 'totp_removed', clientIp, userAgent);
+      await activityLog.record(user.id, 'totp_removed', clientIp, userAgent, undefined, sessionHash);
+      return new Response(JSON.stringify({ success: true }));
+    }
+  }
+
+  // ─── PIN 管理接口 (/api/account/pin) ───
+  if (action === 'pin') {
+    const dbUser = await userModel.getById(user.id);
+    if (!dbUser) return new Response("User not found", { status: 404 });
+
+    const body = await request.json() as any;
+    const { password, totpTokenHash, totpSalt } = body;
+
+    // 验证用户身份 (密码或 TOTP)
+    let authenticated = false;
+    if (totpTokenHash && dbUser.totp_enabled && dbUser.totp_secret) {
+      authenticated = await verifyTOTP(dbUser.totp_secret, totpTokenHash, totpSalt);
+      if (!authenticated) {
+        return new Response("Invalid TOTP code", { status: 400 });
+      }
+    } else if (password) {
+      authenticated = await verifyPassword(password, dbUser.hashed_password, dbUser.password_version ?? 1);
+      if (!authenticated) {
+        return new Response("Incorrect password", { status: 400 });
+      }
+    } else {
+      return new Response("Authentication required", { status: 400 });
+    }
+
+    if (request.method === 'POST') {
+      const { pinHash } = body;
+      // 验证 PIN 格式是否为 64 位十六进制哈希
+      if (!pinHash || !/^[a-fA-F0-9]{64}$/.test(pinHash)) {
+        return new Response("Invalid PIN hash format", { status: 400 });
+      }
+
+      // Store the client-side PIN hash directly to support challenge-response unlock verification
+      await userModel.updatePinHash(user.id, pinHash);
+      return new Response(JSON.stringify({ success: true }));
+    }
+
+    if (request.method === 'DELETE') {
+      await userModel.updatePinHash(user.id, null);
       return new Response(JSON.stringify({ success: true }));
     }
   }

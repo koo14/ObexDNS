@@ -12,7 +12,9 @@ export type ActivityAction =
   | 'totp_setup'
   | 'totp_removed'
   | 'recovery_key_used'
-  | 'session_revoked';
+  | 'session_revoked'
+  | 'pin_verify_success'
+  | 'pin_verify_fail';
 
 export interface UserActivityEntry {
   id: number;
@@ -22,6 +24,7 @@ export interface UserActivityEntry {
   user_agent: string | null;
   timestamp: number;
   extra: string | null;
+  session_id_hash: string | null;
 }
 
 export class ActivityLogModel {
@@ -40,12 +43,13 @@ export class ActivityLogModel {
     action: ActivityAction,
     ip: string,
     userAgent?: string | null,
-    extra?: Record<string, unknown>
+    extra?: Record<string, unknown>,
+    sessionIdHash?: string | null
   ): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
     await this.db
       .prepare(
-        'INSERT INTO user_activity_log (user_id, action, ip_address, user_agent, timestamp, extra) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO user_activity_log (user_id, action, ip_address, user_agent, timestamp, extra, session_id_hash) VALUES (?, ?, ?, ?, ?, ?, ?)'
       )
       .bind(
         userId,
@@ -53,7 +57,8 @@ export class ActivityLogModel {
         ip,
         userAgent ?? null,
         now,
-        extra ? JSON.stringify(extra) : null
+        extra ? JSON.stringify(extra) : null,
+        sessionIdHash ?? null
       )
       .run();
   }

@@ -44,13 +44,25 @@ export default {
 
         const isPublicRoute = [
           '/api/auth/login', '/api/auth/signup', '/api/auth/prelogin', '/api/auth/check-username',
+          '/api/auth/unlock-session',
           '/api/clientinfo', '/api/regions'
-        ].includes(url.pathname);
+        ].includes(url.pathname) || url.pathname.startsWith('/api/icon/');
         const isMobileConfigRoute = url.pathname.endsWith('/mobileconfig');
 
         // Check authentication boundary
         if (!currentUser && !isPublicRoute && !isMobileConfigRoute) {
           return new Response("Unauthorized", { status: 401 });
+        }
+
+        // Handle paused sessions: block all routes except unlock and logout
+        if (currentUser && currentUser.isPaused) {
+          const isAllowedWhilePaused = [
+            '/api/auth/unlock-session',
+            '/api/auth/logout'
+          ].includes(url.pathname);
+          if (!isAllowedWhilePaused) {
+            return new Response("session_paused", { status: 403 });
+          }
         }
 
         // Validate CSRF for mutating requests
@@ -66,7 +78,8 @@ export default {
           url.pathname === '/api/regions' ||
           url.pathname === '/api/substitute' ||
           url.pathname === '/api/presets/upstreams' ||
-          url.pathname === '/api/presets/filters'
+          url.pathname === '/api/presets/filters' ||
+          url.pathname.startsWith('/api/icon/')
         ) {
           return handleSystemRequest(request, env);
         }
@@ -137,15 +150,17 @@ export default {
     let response = await handleRequest();
     
     // Ensure CSRF token is set in cookies if authenticated but cookie is missing from the request
-    if (currentUser && !readCsrfCookie(request.headers.get("Cookie"))) {
+    const finalUser = currentUser as User | null;
+    if (finalUser && !readCsrfCookie(request.headers.get("Cookie"))) {
+      const isKeepLoggedIn = finalUser.sessionId?.startsWith("k_");
       try {
         const csrfToken = generateId(32);
-        response.headers.append("Set-Cookie", createCsrfCookie(csrfToken));
+        response.headers.append("Set-Cookie", createCsrfCookie(csrfToken, env, isKeepLoggedIn));
       } catch (e) {
         // If headers are immutable (e.g. from static asset fetch), clone the response and set the header
         const newHeaders = new Headers(response.headers);
         const csrfToken = generateId(32);
-        newHeaders.append("Set-Cookie", createCsrfCookie(csrfToken));
+        newHeaders.append("Set-Cookie", createCsrfCookie(csrfToken, env, isKeepLoggedIn));
         response = new Response(response.body, {
           status: response.status,
           statusText: response.statusText,

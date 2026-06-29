@@ -1,13 +1,14 @@
 import { D1Database, ExecutionContext as CFExecutionContext } from "@cloudflare/workers-types";
+import { SystemSecretsModel } from "./models/systemSecrets";
 
 export interface Env {
   DB: D1Database;
   ASSETS: any;
   MAX_ACCESS_POINTS_PER_PROFILE?: string | number;
   MAX_PROFILES_PER_USER?: string | number;
-  SESSION_EXPIRATION_DAYS?: string | number;
+  DEFAULT_SESSION_EXPIRATION_MINUTES?: string | number;
+  OPTIONAL_SESSION_EXPIRATION_DAYS?: string | number;
   ACCESS_TOKEN_EXPIRATION_MINUTES?: string | number;
-  SESSION_IDLE_TIMEOUT_MINUTES?: string | number;
   SESSION_GEO_DISTANCE_KM?: string | number;
   PREAUTH_TTL_SECONDS?: string | number;
   BLOOM_MEM_TTL?: string | number;
@@ -19,6 +20,11 @@ export interface Env {
   THROTTLE_ACTIVE_SEC?: string | number;
   SYNC_PROFILE_INTERVAL_SEC?: string | number;
   TURNSTILE_SECRET_KEY?: string;
+  MAX_SYNC_DOMAINS?: string | number;
+  MAX_LIST_DOMAINS?: string | number;
+  MAX_LOG_RETENTION_DAYS?: string | number;
+  MAX_LOGS_PER_PROFILE?: string | number;
+  NORMAL_USER_MAX_LOG_RETENTION_DAYS?: string | number;
   [key: string]: any;
 }
 
@@ -34,6 +40,11 @@ export interface User {
   last_resolve_at?: number;
   timezone?: string | null;
   locale?: string | null;
+  password_version?: number;
+  pin_hash?: string | null;
+  isPaused?: boolean;
+  sessionId?: string;
+  session_lock_timeout?: number;
 }
 
 export interface UserActivityLog {

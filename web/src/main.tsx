@@ -73,7 +73,25 @@ window.fetch = async function (input, init) {
   
   let response = await originalFetch(input, init);
 
-  if (isApi && response.status === 401 && !url.includes("/api/auth/")) {
+  if (isApi && response.status === 403 && !url.includes("/api/auth/")) {
+    try {
+      const cloned = response.clone();
+      const text = await cloned.text();
+      if (text === "session_paused") {
+        window.dispatchEvent(new Event("session_paused"));
+      }
+    } catch (e) {
+      // Ignore reading errors
+    }
+  }
+
+  const shouldRefresh = isApi && response.status === 401 && (
+    !url.includes("/api/auth/") || 
+    url.includes("/api/auth/unlock-session") || 
+    url.includes("/api/auth/lock-session")
+  );
+
+  if (shouldRefresh) {
     if (!isRefreshing) {
       isRefreshing = true;
       originalFetch("/api/auth/refresh", { method: "POST" }).then(async (refreshRes) => {
@@ -129,6 +147,14 @@ window.fetch = async function (input, init) {
 
   return response;
 };
+
+// Clear session-based logs cache on new session startup
+if (typeof window !== "undefined" && "caches" in window) {
+  if (!sessionStorage.getItem("obex_session_active")) {
+    caches.delete("obex-dns-logs-v1").catch(() => {});
+    sessionStorage.setItem("obex_session_active", "true");
+  }
+}
 
 createRoot(document.getElementById("root")!).render(
   <OverlaysProvider>

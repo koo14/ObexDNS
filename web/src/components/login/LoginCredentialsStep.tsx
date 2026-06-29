@@ -1,6 +1,7 @@
 import React from "react";
-import { FormGroup, InputGroup, Button, Intent } from "@blueprintjs/core";
+import { FormGroup, InputGroup, Button, Intent, Checkbox } from "@blueprintjs/core";
 import { useTranslation } from "react-i18next";
+import { DigitInput } from "../DigitInput";
 
 /**
  * Properties for the LoginCredentialsStep component.
@@ -32,6 +33,12 @@ export interface LoginCredentialsStepProps {
   onClearError: () => void;
   /** Callback to handle the form submission. */
   onSubmit: (e: React.FormEvent) => void;
+  /** Whether the user wants to stay logged in. */
+  keepLoggedIn: boolean;
+  /** Callback to toggle stay logged in. */
+  setKeepLoggedIn: (val: boolean) => void;
+  /** Optional session expiration duration in days. */
+  optionalSessionExpirationDays: number;
 }
 
 /**
@@ -54,7 +61,10 @@ export const LoginCredentialsStep: React.FC<LoginCredentialsStepProps> = ({
   setRecoveryKey,
   loading,
   onClearError,
-  onSubmit
+  onSubmit,
+  keepLoggedIn,
+  setKeepLoggedIn,
+  optionalSessionExpirationDays
 }) => {
   const [showPassword, setShowPassword] = React.useState(false);
   const { t } = useTranslation();
@@ -134,21 +144,11 @@ export const LoginCredentialsStep: React.FC<LoginCredentialsStepProps> = ({
                   : t("auth.totpVerification", "TOTP Verification")
               }
             >
-              <InputGroup
-                id="totp-code"
-                leftIcon="shield"
-                placeholder="000000"
-                size="large"
-                className="rounded-xl font-mono tracking-widest text-center"
+              <DigitInput
+                length={6}
                 value={totpToken}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  setTotpToken(
-                    e.target.value.replace(/\D/g, "").slice(0, 6)
-                  )
-                }
-                maxLength={6}
-                inputMode="numeric"
-                required
+                onChange={setTotpToken}
+                disabled={loading}
                 autoFocus={!requiresPassword}
               />
             </FormGroup>
@@ -170,6 +170,13 @@ export const LoginCredentialsStep: React.FC<LoginCredentialsStepProps> = ({
           </div>
         </>
       )}
+
+      <Checkbox
+        checked={keepLoggedIn}
+        onChange={(e) => setKeepLoggedIn(e.currentTarget.checked)}
+        label={t("auth.keepLoggedIn", "Keep me logged in for {{days}} days", { days: optionalSessionExpirationDays })}
+        className="mt-4 text-left"
+      />
 
       <Button
         fill

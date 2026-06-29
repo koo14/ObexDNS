@@ -15,6 +15,7 @@ export interface Session {
   longitude?: number | null;
   rotation_counter?: number;
   last_active_at?: number | null;
+  is_paused?: number;
 }
 
 export interface SessionValidationResult {
@@ -57,12 +58,20 @@ export async function createSession(
   ipAddress: string | null = null,
   userAgent: string | null = null,
   latitude: number | null = null,
-  longitude: number | null = null
+  longitude: number | null = null,
+  keepLoggedIn?: boolean
 ): Promise<{ session: Session; refreshToken: string }> {
-  const sessionId = generateId(SESSION_ID_LENGTH);
+  const prefix = keepLoggedIn ? "k_" : "s_";
+  const sessionId = prefix + generateId(SESSION_ID_LENGTH - 2);
   const now = Math.floor(Date.now() / 1000);
-  const expirationDays = Number(env.SESSION_EXPIRATION_DAYS) || 1;
-  const expiresAt = now + expirationDays * 24 * 60 * 60;
+  let expiresAt: number;
+  if (keepLoggedIn) {
+    const expirationDays = Number(env.OPTIONAL_SESSION_EXPIRATION_DAYS) || 30;
+    expiresAt = now + expirationDays * 24 * 60 * 60;
+  } else {
+    const expirationMinutes = Number(env.DEFAULT_SESSION_EXPIRATION_MINUTES) || 1440;
+    expiresAt = now + expirationMinutes * 60;
+  }
 
   const session: Session = {
     id: sessionId,
@@ -126,13 +135,16 @@ export async function rotateSession(
     latitude: result.latitude,
     longitude: result.longitude,
     rotation_counter: result.rotation_counter,
-    last_active_at: result.last_active_at
+    last_active_at: result.last_active_at,
+    is_paused: result.is_paused
   };
 
   const user: User = {
     id: result.u_id,
     username: result.username,
-    role: result.role as 'admin' | 'user'
+    role: result.role as 'admin' | 'user',
+    pin_hash: result.pin_hash,
+    session_lock_timeout: result.session_lock_timeout
   };
 
   // Anti-reuse mechanism
@@ -148,15 +160,7 @@ export async function rotateSession(
     return { session: null, user, newRefreshToken: null, reason: "expired" };
   }
 
-  // Idle timeout check
   const now = Math.floor(Date.now() / 1000);
-  const idleTimeoutMin = Number(env.SESSION_IDLE_TIMEOUT_MINUTES) || 60;
-  const idleTimeoutSec = idleTimeoutMin * 60;
-  const lastActive = session.last_active_at || session.created_at;
-  if (now - lastActive > idleTimeoutSec) {
-    await invalidateSession(env, session.id);
-    return { session: null, user, newRefreshToken: null, reason: "idle_timeout" };
-  }
 
   // Strict Geolocation Check
   if (
@@ -175,10 +179,22 @@ export async function rotateSession(
     return { session: null, user, newRefreshToken: null, reason: "geolocation_mismatch" };
   }
 
+  // Inactivity timeout check during refresh rotation
+  const lastActive = session.last_active_at || session.created_at;
+  if (user.pin_hash && !session.is_paused) {
+    const timeoutSeconds = (user.session_lock_timeout || 15) * 60;
+    if (now - lastActive > timeoutSeconds) {
+      await sessionModel.pauseSession(session.id);
+      session.is_paused = 1;
+    }
+  }
+
   // Session extension (if close to expiration)
   const timeRemaining = session.expires_at - Math.floor(Date.now() / 1000);
-  const expirationDays = Number(env.SESSION_EXPIRATION_DAYS) || 1;
-  const totalDurationInSeconds = expirationDays * 24 * 60 * 60;
+  const isKeepLoggedIn = session.id.startsWith("k_");
+  const totalDurationInSeconds = isKeepLoggedIn
+    ? (Number(env.OPTIONAL_SESSION_EXPIRATION_DAYS) || 30) * 24 * 60 * 60
+    : (Number(env.DEFAULT_SESSION_EXPIRATION_MINUTES) || 1440) * 60;
   const extensionThreshold = Math.floor(totalDurationInSeconds / 2);
   if (timeRemaining < extensionThreshold) {
     session.expires_at = Math.floor(Date.now() / 1000) + totalDurationInSeconds;
@@ -187,7 +203,9 @@ export async function rotateSession(
 
   // Rotate the token
   await sessionModel.incrementRotationCounter(session.id);
-  await sessionModel.updateLastActive(session.id, now);
+  if (!session.is_paused) {
+    await sessionModel.updateLastActive(session.id, now);
+  }
   const newCounter = (session.rotation_counter || 0) + 1;
   const newRefreshToken = createRefreshTokenString(session.id, newCounter);
 

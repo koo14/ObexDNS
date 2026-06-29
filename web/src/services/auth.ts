@@ -13,6 +13,7 @@ export interface AuthConfig {
   turnstile_site_key?: string | null;
   turnstile_enabled_login?: boolean;
   turnstile_enabled_signup?: boolean;
+  optional_session_expiration_days?: number;
 }
 
 export interface PreloginPayload {
@@ -23,6 +24,9 @@ export interface PreloginPayload {
 export interface PreloginResponse {
   requires_password: boolean;
   requires_totp: boolean;
+  password_version?: number;
+  nonce?: string;
+  serverSalt?: string | null;
 }
 
 export interface LoginPayload {
@@ -30,10 +34,12 @@ export interface LoginPayload {
   recoveryKey?: string;
   totpTokenHash?: string;
   totpSalt?: string;
+  keepLoggedIn?: boolean;
 }
 
 export interface LoginResponse {
   accessToken: string;
+  needsMigration?: boolean;
 }
 
 export interface SignupPayload {
@@ -99,4 +105,24 @@ export async function refresh(): Promise<LoginResponse> {
   const res = await fetch("/api/auth/refresh", { method: "POST" });
   if (!res.ok) throw new ApiError(res.status, await res.text());
   return res.json();
+}
+
+export async function getUnlockNonce(): Promise<{ nonce: string; legacy?: boolean }> {
+  const res = await fetch("/api/auth/unlock-session", { method: "GET" });
+  if (!res.ok) throw new ApiError(res.status, await res.text());
+  return res.json();
+}
+
+export async function unlockSession(pinHash: string, nonce: string): Promise<void> {
+  const res = await fetch("/api/auth/unlock-session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pinHash, nonce })
+  });
+  if (!res.ok) throw new ApiError(res.status, await res.text());
+}
+
+export async function lockSession(): Promise<void> {
+  const res = await fetch("/api/auth/lock-session", { method: "POST" });
+  if (!res.ok) throw new ApiError(res.status, await res.text());
 }

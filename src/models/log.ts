@@ -81,26 +81,73 @@ export class LogModel {
   }
 
   /**
-   * 全局清理过期日志 (基于各 Profile 的 settings)
-   * 这是一个更重的操作，建议优化为单个 SQL
+   * Global log cleanup: runs on every cron trigger.
+   *
+   * Applies two independent safety caps per profile:
+   *   1. Time-based: deletes logs older than min(user_setting, MAX_LOG_RETENTION_DAYS).
+   *      The global cap prevents users from setting arbitrarily long retention periods
+   *      (e.g. 360 days) that would cause D1 to overflow.
+   *   2. Row-based: if the profile still has more than MAX_LOGS_PER_PROFILE rows after
+   *      the time-based cleanup, the oldest excess rows are deleted. This acts as a
+   *      circuit-breaker when write rate temporarily exceeds cleanup rate.
+   *
+   * @param maxRetentionDays - Hard cap on log retention days (default 90).
+   * @param maxLogsPerProfile - Hard cap on row count per profile (default 500_000).
    */
-  async cleanupGlobal(): Promise<void> {
-    // 这里的逻辑比较复杂，因为每个 Profile 的保留天数不同
-    // 我们先查询出所有不同的天数配置，并使用 CAST 确保其为数字/NULL
-    const { results } = await this.db.prepare(
-      "SELECT DISTINCT CAST(json_extract(settings, '$.log_retention_days') AS INTEGER) as days FROM profiles"
-    ).all<{days: number | null}>();
-    
-    for (const row of results) {
-      const days = row.days !== null ? Number(row.days) : 30;
-      const threshold = Math.floor(Date.now() / 1000 - (days * 24 * 3600));
-      // 清理所有设置为该天数的 Profile 的过期日志，并在 SQL 中使用 CAST 比较以避免 SQLite 的类型差异问题
-      await this.db.prepare(
-        "DELETE FROM logs WHERE timestamp < ? AND profile_id IN (SELECT id FROM profiles WHERE CAST(json_extract(settings, '$.log_retention_days') AS INTEGER) = ? OR (? = 30 AND json_extract(settings, '$.log_retention_days') IS NULL))"
-      )
-        .bind(threshold, days, days)
-        .run();
+  async cleanupGlobal(
+    maxRetentionDays = 90,
+    maxLogsPerProfile = 500_000,
+  ): Promise<void> {
+    const { results: profiles } = await this.db.prepare(
+      "SELECT id, settings FROM profiles"
+    ).all<{id: string, settings: string}>();
+
+    const statements = [];
+
+    for (const profile of profiles) {
+      // ── 1. Time-based cleanup ────────────────────────────────────────────────
+      let days = 30;
+      try {
+        const settings = JSON.parse(profile.settings);
+        if (settings?.log_retention_days != null) {
+          days = Number(settings.log_retention_days);
+        }
+      } catch {
+        // Use default on parse error
+      }
+
+      // Enforce global hard cap: user setting cannot exceed maxRetentionDays
+      const effectiveDays = Math.min(days, maxRetentionDays);
+      const threshold = Math.floor(Date.now() / 1000 - (effectiveDays * 24 * 3600));
+
+      statements.push(
+        this.db.prepare(
+          "DELETE FROM logs WHERE profile_id = ? AND timestamp < ?"
+        ).bind(profile.id, threshold)
+      );
+
+      // ── 2. Row-count cap (circuit-breaker) ──────────────────────────────────
+      // Delete oldest rows that exceed maxLogsPerProfile, using the
+      // (profile_id, timestamp) composite index for efficiency.
+      statements.push(
+        this.db.prepare(`
+          DELETE FROM logs
+          WHERE profile_id = ?
+            AND id IN (
+              SELECT id FROM logs
+              WHERE profile_id = ?
+              ORDER BY timestamp ASC
+              LIMIT MAX(0, (SELECT COUNT(*) FROM logs WHERE profile_id = ?) - ?)
+            )
+        `).bind(profile.id, profile.id, profile.id, maxLogsPerProfile)
+      );
     }
+
+    if (statements.length > 0) {
+      await this.db.batch(statements);
+    }
+
+    console.log(`[LogModel] cleanupGlobal: processed ${profiles.length} profile(s), cap=${maxRetentionDays}d/${maxLogsPerProfile}rows`);
   }
 
   async getSummary(profileId: string, since: number, until: number, search?: string, accessPointId?: string) {

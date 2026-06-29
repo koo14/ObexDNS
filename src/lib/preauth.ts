@@ -3,6 +3,8 @@ import { SessionModel } from '../models/session';
 import { generateId } from '../utils/crypto';
 import { SESSION_ID_LENGTH } from './session';
 
+import { cacheUtils } from '../utils/cache';
+
 /**
  * Creates a short-lived pre-auth session after Step 1 (username + Turnstile).
  * @returns The pre-auth session token string
@@ -38,4 +40,27 @@ export async function validatePreauthSession(env: Env, token: string): Promise<s
 export async function invalidatePreauthSession(env: Env, token: string): Promise<void> {
   const sessionModel = new SessionModel(env.DB);
   await sessionModel.deletePendingTotpSession(token);
+}
+
+/**
+ * Increments failed attempts for a pre-auth session. If it reaches 3 attempts, deletes it.
+ * Returns the number of attempts remaining (from 3 down to 0).
+ */
+export async function recordFailedPreauthAttempt(cache: Cache, token: string, env: Env): Promise<number> {
+  const cacheKey = `preauth_state:${token}`;
+  const state = await cacheUtils.get<{ nonce: string, failedAttempts: number }>(cache, cacheKey);
+  if (!state) return 0;
+  
+  const failedAttempts = (state.failedAttempts || 0) + 1;
+  
+  if (failedAttempts >= 3) {
+    const sessionModel = new SessionModel(env.DB);
+    await sessionModel.deletePendingTotpSession(token);
+    await cacheUtils.delete(cache, cacheKey);
+    return 0;
+  }
+  
+  const preauthTtl = Number(env.PREAUTH_TTL_SECONDS) || 300;
+  await cacheUtils.set(cache, cacheKey, { ...state, failedAttempts }, preauthTtl);
+  return 3 - failedAttempts;
 }
