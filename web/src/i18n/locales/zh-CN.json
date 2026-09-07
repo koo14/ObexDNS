@@ -118,7 +118,12 @@
     "cfErrorGeneric": "Cloudflare 边缘服务异常，服务暂时不可用，请稍后重试。{{rayId}}",
     "htmlErrorGeneric": "服务器返回异常网页响应 (HTTP {{status}})，请稍后重试。",
     "tooManyAttempts": "请求过于频繁或尝试次数过多，已被临时限制，请稍后再试。",
-    "dbQuotaExceeded": "数据库每日免费读取配额已用尽，请等待次日自动重置或升级配额。"
+    "dbQuotaExceeded": "数据库每日免费读取配额已用尽，请等待次日自动重置或升级配额。",
+    "noUsersRegistered": "系统尚无账号，请注册成为管理员。",
+    "registerAdminTitle": "注册管理员账号",
+    "registerAdminDesc": "系统尚无账号，首位注册用户将自动成为系统管理员。",
+    "goToRegisterAdmin": "注册管理员",
+    "dbNotInitialized": "数据库未初始化或缺少数据表，请在终端执行 npm run db:migrate:prod 应用数据库迁移。"
   },
   "setup": {
     "title": "安装指南",
@@ -574,10 +579,10 @@
     "copied": "已复制！",
     "stepDbTitle": "1. 创建与绑定 D1 数据库",
     "stepDbDesc": "在 Cloudflare 中创建 D1 数据库实例，在终端运行以下命令：",
-    "stepDbCommand1": "wrangler d1 create obex_db",
+    "stepDbCommand1": "wrangler d1 create dns_worker_db",
     "stepDbDesc2": "复制终端输出的配置信息，并粘贴到项目根目录的 wrangler.toml 里的 [[d1_databases]] 中：",
-    "stepDbCommand2": "[[d1_databases]]\nbinding = \"DB\"\ndatabase_name = \"obex_db\"\ndatabase_id = \"<您的_D1_DATABASE_ID>\"\nmigrations_dir = \"migrations\"",
-    "stepDbDashDesc": "1. 登录 Cloudflare 网页控制台 -> Workers & Pages -> D1 -> 创建数据库 -> 命名为 'obex_db'。\n2. 进入您的 Worker -> 设置 -> 变量 -> D1 数据库绑定 -> 添加绑定。\n3. 将绑定名称设置为 'DB'，D1 数据库选择 'obex_db'，并保存。\n4. 进入您的 D1 数据库 -> 控制台，复制并运行 migrations 目录下的 SQL 迁移脚本以初始化数据库表结构。",
+    "stepDbCommand2": "[[d1_databases]]\nbinding = \"DB\"\ndatabase_name = \"dns_worker_db\"\ndatabase_id = \"<您的_D1_DATABASE_ID>\"\nmigrations_dir = \"migrations\"",
+    "stepDbDashDesc": "1. 登录 Cloudflare 网页控制台 -> Workers & Pages -> D1 -> 创建数据库 -> 命名为 'dns_worker_db'。\n2. 进入您的 Worker -> 设置 -> 变量 -> D1 数据库绑定 -> 添加绑定。\n3. 将绑定名称设置为 'DB'，D1 数据库选择 'dns_worker_db'，并保存。\n4. 进入您的 D1 数据库 -> 控制台，复制并运行 migrations 目录下的 SQL 迁移脚本以初始化数据库表结构。",
     "stepJwtTitle": "2. 设置 JWT 密钥 Secrets",
     "stepJwtDesc": "系统使用 JWT 密钥签署会话令牌，请将其设置为 Cloudflare Secrets 密钥：",
     "stepJwtCommand1": "wrangler secret put JWT_SECRET",

@@ -117,7 +117,12 @@
     "cfErrorGeneric": "Cloudflare-Edge-Fehler. Der Dienst ist vorübergehend nicht verfügbar, bitte versuchen Sie es später erneut. {{rayId}}",
     "htmlErrorGeneric": "Der Server hat eine unerwartete Antwort zurückgegeben (HTTP {{status}}). Bitte versuchen Sie es später erneut.",
     "tooManyAttempts": "Zu viele Anfragen oder Versuche. Bitte versuchen Sie es später erneut.",
-    "dbQuotaExceeded": "Das tägliche Lesekontingent der Datenbank wurde überschritten. Bitte warten Sie auf den täglichen Reset."
+    "dbQuotaExceeded": "Das tägliche Lesekontingent der Datenbank wurde überschritten. Bitte warten Sie auf den täglichen Reset.",
+    "noUsersRegistered": "Noch keine Konten registriert. Bitte registrieren Sie sich als Administrator.",
+    "registerAdminTitle": "Administratorkonto registrieren",
+    "registerAdminDesc": "Keine Konten im System. Der erste Benutzer wird Systemadministrator.",
+    "goToRegisterAdmin": "Admin registrieren",
+    "dbNotInitialized": "Datenbank nicht initialisiert oder Tabellen fehlen. Bitte führen Sie npm run db:migrate:prod aus."
   },
   "setup": {
     "title": "Installationsanleitung",
@@ -570,10 +575,10 @@
     "copied": "Kopiert!",
     "stepDbTitle": "1. D1-Datenbank binden",
     "stepDbDesc": "Erstellen Sie eine D1-Datenbank und binden Sie diese an Ihren Worker. Führen Sie im Terminal Folgendes aus:",
-    "stepDbCommand1": "wrangler d1 create obex_db",
+    "stepDbCommand1": "wrangler d1 create dns_worker_db",
     "stepDbDesc2": "Kopieren Sie die ausgegebenen Details und fügen Sie diese in Ihre wrangler.toml unter [[d1_databases]] ein:",
-    "stepDbCommand2": "[[d1_databases]]\nbinding = \"DB\"\ndatabase_name = \"obex_db\"\ndatabase_id = \"<IHRE_D1_DATABASE_ID>\"\nmigrations_dir = \"migrations\"",
-    "stepDbDashDesc": "1. Gehen Sie zu Cloudflare Dashboard -> Workers & Pages -> D1 -> Datenbank erstellen -> Nennen Sie sie 'obex_db'.\n2. Gehen Sie zu Ihrem Worker -> Einstellungen -> Variablen -> D1-Datenbankbindungen -> Bindung hinzufügen.\n3. Setzen Sie den Bindungsnamen auf 'DB' und wählen Sie 'obex_db' als D1-Datenbank aus. Speichern.\n4. Gehen Sie zu Ihrer D1-Datenbank -> Konsole, kopieren Sie das SQL-Tabellenschema-Skript aus dem Migrationsordner und führen Sie es aus.",
+    "stepDbCommand2": "[[d1_databases]]\nbinding = \"DB\"\ndatabase_name = \"dns_worker_db\"\ndatabase_id = \"<IHRE_D1_DATABASE_ID>\"\nmigrations_dir = \"migrations\"",
+    "stepDbDashDesc": "1. Gehen Sie zu Cloudflare Dashboard -> Workers & Pages -> D1 -> Datenbank erstellen -> Nennen Sie sie 'dns_worker_db'.\n2. Gehen Sie zu Ihrem Worker -> Einstellungen -> Variablen -> D1-Datenbankbindungen -> Bindung hinzufügen.\n3. Setzen Sie den Bindungsnamen auf 'DB' und wählen Sie 'dns_worker_db' als D1-Datenbank aus. Speichern.\n4. Gehen Sie zu Ihrer D1-Datenbank -> Konsole, kopieren Sie das SQL-Tabellenschema-Skript aus dem Migrationsordner und führen Sie es aus.",
     "stepJwtTitle": "2. JWT-Geheimschlüssel festlegen",
     "stepJwtDesc": "DNS Worker erfordert ein JWT-Geheimnis zum Signieren von Sitzungstoken. Konfigurieren Sie es als Cloudflare Secret:",
     "stepJwtCommand1": "wrangler secret put JWT_SECRET",

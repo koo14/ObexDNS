@@ -151,7 +151,7 @@ export class LogModel {
     while (totalDeleted < maxRows) {
       const currentBatch = Math.min(batchSize, maxRows - totalDeleted);
       const result = await this.db.prepare(
-        "DELETE FROM logs WHERE id IN (SELECT id FROM logs WHERE profile_id = ? AND timestamp < ? LIMIT ?)"
+        "DELETE FROM logs WHERE profile_id = ? AND timestamp < ? LIMIT ?"
       )
         .bind(profileId, olderThanTimestamp, currentBatch)
         .run();
@@ -174,10 +174,10 @@ export class LogModel {
    *   2. Batch limiting: deletes at most 10,000 rows per profile per run to avoid
    *      exhausting daily D1 write quotas or causing CPU execution timeouts.
    *
-   * @param maxRetentionDays - Hard cap on log retention days (default 90).
+   * @param maxRetentionDays - Hard cap on log retention days (default 30).
    */
   async cleanupGlobal(
-    maxRetentionDays = 90
+    maxRetentionDays = 30
   ): Promise<void> {
     try {
       const { results: profiles } = await this.db.prepare(
@@ -205,7 +205,7 @@ export class LogModel {
         // Delete up to 10,000 rows per profile per hourly cron run to prevent write spikes
         statements.push(
           this.db.prepare(
-            "DELETE FROM logs WHERE id IN (SELECT id FROM logs WHERE profile_id = ? AND timestamp < ? LIMIT 10000)"
+            "DELETE FROM logs WHERE profile_id = ? AND timestamp < ? LIMIT 10000"
           ).bind(profile.id, threshold)
         );
       }

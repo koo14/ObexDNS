@@ -183,6 +183,19 @@ export function formatApiErrorMessage(err: any, t: (key: string, options?: any) 
     });
   }
 
+  if (
+    bodyText === "no_users_registered" ||
+    bodyText.includes("no_users_registered")
+  ) {
+    return t("auth.noUsersRegistered", "系统尚无账号，请注册成为管理员。");
+  }
+
+  if (bodyText.includes("no such table") || bodyText.includes("SQLITE_ERROR")) {
+    return t("auth.dbNotInitialized", {
+      defaultValue: "数据库未初始化或缺少数据表，请在终端执行 'npm run db:migrate:prod' 应用数据库迁移。"
+    });
+  }
+
   if (bodyText === "invalid_credentials" || bodyText === "user_not_found") {
     return t("auth.authFailed", "Authentication failed, please check your username or password.");
   }
@@ -227,7 +240,7 @@ export function loadTurnstileScript(onLoad: () => void): void {
     script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onloadTurnstileCallback";
     script.async = true;
     script.defer = true;
-    const nonce = (window as any).OBEX_CONFIG?.nonce;
+    const nonce = (window as any).DNS_WORKER_CONFIG?.nonce;
     if (nonce) {
       script.nonce = nonce;
     }
