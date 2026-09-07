@@ -30,6 +30,7 @@ export const DisablePinDialog: React.FC<DisablePinDialogProps> = ({
 }) => {
   const { t } = useTranslation();
   const [verifyPassword, setVerifyPassword] = useState("");
+  const [showVerifyPassword, setShowVerifyPassword] = useState(false);
   const [verifyTotp, setVerifyTotp] = useState("");
   const [useTotpForVerify, setUseTotpForVerify] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -76,6 +77,7 @@ export const DisablePinDialog: React.FC<DisablePinDialogProps> = ({
   const handleClose = () => {
     setError("");
     setVerifyPassword("");
+    setShowVerifyPassword(false);
     setVerifyTotp("");
     onClose();
   };
@@ -129,11 +131,19 @@ export const DisablePinDialog: React.FC<DisablePinDialogProps> = ({
             <FormGroup label={t("auth.currentPassword", "Current Password")} labelFor="disable-pw-input">
               <InputGroup
                 id="disable-pw-input"
-                type="password"
+                type={showVerifyPassword ? "text" : "password"}
                 placeholder={t("auth.passwordPlaceholder", "Enter current password")}
                 value={verifyPassword}
                 onChange={(e) => setVerifyPassword(e.target.value)}
                 leftIcon="lock"
+                rightElement={
+                  <Button
+                    minimal={true}
+                    icon={showVerifyPassword ? "eye-open" : "eye-off"}
+                    onClick={() => setShowVerifyPassword(!showVerifyPassword)}
+                    title={showVerifyPassword ? t("auth.hidePassword", "Hide password") : t("auth.showPassword", "Show password")}
+                  />
+                }
                 required
               />
             </FormGroup>
