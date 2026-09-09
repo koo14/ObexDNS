@@ -31,7 +31,70 @@ export async function handleProfileListsRequest(
       return new Response(JSON.stringify({ message: "Sync started" }), { status: 202 });
     }
 
-    const { url: listUrl } = await request.json() as { url: string };
+    const body = await request.json() as any;
+
+    // Support bulk list addition when body is an array or contains lists/urls/filters/blocklists array
+    const candidateList = Array.isArray(body)
+      ? body
+      : (body?.lists || body?.list || body?.urls || body?.url || body?.filters || body?.filter || body?.blocklists || body?.blocklist);
+
+    const isBulk = Array.isArray(candidateList);
+    if (isBulk) {
+      const rawList: any[] = candidateList;
+      const seen = new Set<string>();
+      const validItems: { url: string; enabled: number }[] = [];
+
+      for (const item of rawList) {
+        let urlStr = typeof item === 'string'
+          ? item.trim()
+          : (item?.url ?? item?.link ?? item?.uri ?? item?.address ?? item?.source ?? item?.target ?? item?.download_url ?? '');
+        if (typeof urlStr !== 'string') continue;
+        urlStr = urlStr.replace(/^["']|["']$/g, '').trim();
+        if (urlStr.startsWith('//')) {
+          urlStr = `https:${urlStr}`;
+        } else if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
+          if (urlStr.includes('.') && !urlStr.includes(' ') && urlStr.length > 3) {
+            urlStr = `https://${urlStr}`;
+          } else {
+            continue;
+          }
+        }
+        if (!isSafeUrl(urlStr)) continue;
+        const norm = urlStr.toLowerCase();
+        if (seen.has(norm)) continue;
+        seen.add(norm);
+
+        const enabled = (item && typeof item === 'object' && item.enabled !== undefined)
+          ? (item.enabled ? 1 : 0)
+          : 1;
+        validItems.push({ url: urlStr, enabled });
+      }
+
+      if (validItems.length === 0) {
+        return new Response(JSON.stringify({ count: 0, message: "No valid URLs provided" }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      const existingLists = await listModel.getLists(profileId);
+      const existingUrls = new Set(existingLists.map(l => l.url.trim().toLowerCase()));
+      const itemsToInsert = validItems.filter(item => !existingUrls.has(item.url.toLowerCase()));
+
+      let insertedCount = 0;
+      if (itemsToInsert.length > 0) {
+        insertedCount = await listModel.addListsBulk(profileId, itemsToInsert);
+        ctx.waitUntil(syncNextListForProfile(profileId, env, ctx));
+        ctx.waitUntil(pipeline.clearCache(profileId));
+      }
+
+      return new Response(JSON.stringify({ success: true, count: insertedCount }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const { url: listUrl } = body as { url: string };
     if (!listUrl || (!listUrl.startsWith('http://') && !listUrl.startsWith('https://'))) {
       return new Response("Invalid list URL format", { status: 400 });
     }

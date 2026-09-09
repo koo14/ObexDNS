@@ -7,8 +7,11 @@ import {
   getProfiles,
   updateProfileSettings,
   addProfileRule,
+  addProfileRulesBulk,
+  addProfileListsBulk,
+  addCustomProfileList,
 } from "../../services";
-import type { GlobalProfileSettings } from "../../services";
+import type { GlobalProfileSettings, Rule } from "../../services";
 
 interface ExportedRule {
   type: string;
@@ -19,15 +22,50 @@ interface ExportedRule {
   v_txt?: string | null;
   record_type?: string;
   priority?: number;
+  created_at?: number;
+}
+
+interface ExportedFilter {
+  url?: string;
+  link?: string;
+  uri?: string;
+  address?: string;
+  source?: string;
+  target?: string;
+  download_url?: string;
+  enabled?: boolean;
 }
 
 interface ExportedProfileData {
   version?: number;
   name: string;
-  settings: GlobalProfileSettings;
+  settings: GlobalProfileSettings & {
+    filters?: (string | ExportedFilter)[] | Record<string, unknown>;
+    filter?: (string | ExportedFilter)[] | string | Record<string, unknown>;
+    lists?: (string | ExportedFilter)[] | Record<string, unknown>;
+    list?: (string | ExportedFilter)[] | string | Record<string, unknown>;
+    blocklists?: (string | ExportedFilter)[] | Record<string, unknown>;
+    blocklist?: (string | ExportedFilter)[] | string | Record<string, unknown>;
+  };
   rules?: ExportedRule[];
+  filters?: (string | ExportedFilter)[] | Record<string, unknown>;
+  filter?: (string | ExportedFilter)[] | string | Record<string, unknown>;
+  lists?: (string | ExportedFilter)[] | Record<string, unknown>;
+  list?: (string | ExportedFilter)[] | string | Record<string, unknown>;
+  blocklists?: (string | ExportedFilter)[] | Record<string, unknown>;
+  blocklist?: (string | ExportedFilter)[] | string | Record<string, unknown>;
+  subscriptions?: (string | ExportedFilter)[] | Record<string, unknown>;
+  subscription?: (string | ExportedFilter)[] | string | Record<string, unknown>;
+  external_filters?: (string | ExportedFilter)[] | Record<string, unknown>;
   exported_at?: number;
 }
+
+/**
+ * Current supported profile export schema version.
+ * - v1: Legacy format (settings and rules only)
+ * - v2: Extended format (settings, rules, and external subscription filter lists)
+ */
+export const CURRENT_PROFILE_SCHEMA_VERSION = 2;
 
 export const useImportProfile = (onRefresh?: () => void) => {
   const { t } = useTranslation();
@@ -56,6 +94,14 @@ export const useImportProfile = (onRefresh?: () => void) => {
       if (!data || typeof data !== "object" || !data.settings || !data.name) {
         alert(t("common.invalidFormat", "无效文件格式"));
         return;
+      }
+
+      // Schema version check: v1 (rules only), v2 (rules + external filters)
+      const fileVersion = typeof data.version === "number" ? data.version : 1;
+      if (fileVersion > CURRENT_PROFILE_SCHEMA_VERSION) {
+        console.warn(
+          `[ProfileImport] File version (${fileVersion}) is newer than supported version (${CURRENT_PROFILE_SCHEMA_VERSION}). Proceeding with backward-compatible import.`
+        );
       }
 
       // Fetch existing profiles to avoid duplicate name conflicts
@@ -93,9 +139,10 @@ export const useImportProfile = (onRefresh?: () => void) => {
       // Update settings
       await updateProfileSettings(createdProfileId, data.settings);
 
-      // Import rules sequentially if present, deduplicating identical patterns
-      if (data.rules && Array.isArray(data.rules)) {
+      // Batch import rules if present
+      if (data.rules && Array.isArray(data.rules) && data.rules.length > 0) {
         const seenPatterns = new Set<string>();
+        const validRules: Omit<Rule, "id">[] = [];
         for (const rule of data.rules) {
           if (
             rule &&
@@ -107,21 +154,150 @@ export const useImportProfile = (onRefresh?: () => void) => {
               continue;
             }
             seenPatterns.add(normalizedPattern);
+            validRules.push({
+              type: rule.type,
+              pattern: rule.pattern.trim(),
+              v_a: rule.v_a || undefined,
+              v_aaaa: rule.v_aaaa || undefined,
+              v_cname: rule.v_cname || undefined,
+              v_txt: rule.v_txt || undefined,
+              created_at: typeof rule.created_at === "number" ? rule.created_at : undefined,
+            });
+          }
+        }
 
-            try {
-              await addProfileRule(createdProfileId, {
-                type: rule.type,
-                pattern: rule.pattern.trim(),
-                v_a: rule.v_a || undefined,
-                v_aaaa: rule.v_aaaa || undefined,
-                v_cname: rule.v_cname || undefined,
-                v_txt: rule.v_txt || undefined,
-              });
-            } catch (err: unknown) {
-              const errMsg = err instanceof Error ? err.message : String(err);
-              // Ignore duplicate rule error during import, rethrow any other unexpected errors
-              if (!errMsg.includes("Rule for this domain already exists")) {
-                throw err;
+        if (validRules.length > 0) {
+          try {
+            await addProfileRulesBulk(createdProfileId, validRules);
+          } catch (bulkErr) {
+            console.warn("[ProfileImport] Bulk rules failed, falling back to sequential:", bulkErr);
+            for (const r of validRules) {
+              try {
+                await addProfileRule(createdProfileId, r);
+              } catch (seqErr: unknown) {
+                const msg = seqErr instanceof Error ? seqErr.message : String(seqErr);
+                if (!msg.includes("Rule for this domain already exists")) {
+                  throw seqErr;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Batch import filters / subscription lists if present with maximum flexibility across keys and formats
+      const extractFilterCandidates = (cfg: ExportedProfileData): unknown[] => {
+        if (!cfg || typeof cfg !== "object") return [];
+        const raw =
+          cfg.filters ??
+          cfg.filter ??
+          cfg.lists ??
+          cfg.list ??
+          cfg.blocklists ??
+          cfg.blocklist ??
+          cfg.subscriptions ??
+          cfg.subscription ??
+          cfg.external_filters ??
+          cfg.settings?.filters ??
+          cfg.settings?.filter ??
+          cfg.settings?.lists ??
+          cfg.settings?.list ??
+          cfg.settings?.blocklists ??
+          cfg.settings?.blocklist;
+
+        if (!raw) return [];
+        if (Array.isArray(raw)) return raw;
+        if (typeof raw === "string") return [raw];
+        if (typeof raw === "object") {
+          const list: unknown[] = [];
+          for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+            if (typeof v === "string") {
+              list.push(v);
+            } else if (typeof v === "boolean" || typeof v === "number") {
+              list.push({ url: k, enabled: Boolean(v) });
+            } else if (v && typeof v === "object") {
+              list.push(v);
+            }
+          }
+          return list;
+        }
+        return [];
+      };
+
+      const parseFilterItem = (item: unknown): { url: string; enabled: boolean } | null => {
+        if (!item) return null;
+        let rawUrl = "";
+        let enabled = true;
+
+        if (typeof item === "string") {
+          rawUrl = item.trim();
+        } else if (typeof item === "object") {
+          const rec = item as Record<string, unknown>;
+          if (rec.enabled !== undefined) {
+            enabled = Boolean(rec.enabled);
+          }
+          if (typeof rec.url === "string") {
+            rawUrl = rec.url.trim();
+          } else if (typeof rec.link === "string") {
+            rawUrl = rec.link.trim();
+          } else if (typeof rec.uri === "string") {
+            rawUrl = rec.uri.trim();
+          } else if (typeof rec.address === "string") {
+            rawUrl = rec.address.trim();
+          } else if (typeof rec.source === "string") {
+            rawUrl = rec.source.trim();
+          } else if (typeof rec.target === "string") {
+            rawUrl = rec.target.trim();
+          } else if (typeof rec.download_url === "string") {
+            rawUrl = rec.download_url.trim();
+          } else {
+            for (const val of Object.values(rec)) {
+              if (typeof val === "string" && (val.startsWith("http://") || val.startsWith("https://") || val.startsWith("//"))) {
+                rawUrl = val.trim();
+                break;
+              }
+            }
+          }
+        }
+
+        rawUrl = rawUrl.replace(/^["']|["']$/g, "").trim();
+
+        if (rawUrl.startsWith("//")) {
+          rawUrl = `https:${rawUrl}`;
+        } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
+          if (rawUrl.includes(".") && !rawUrl.includes(" ") && rawUrl.length > 3) {
+            rawUrl = `https://${rawUrl}`;
+          } else {
+            return null;
+          }
+        }
+
+        return { url: rawUrl, enabled };
+      };
+
+      const rawFilters = extractFilterCandidates(data);
+      if (rawFilters.length > 0) {
+        const seenUrls = new Set<string>();
+        const validFilters: { url: string; enabled: boolean }[] = [];
+        for (const f of rawFilters) {
+          const parsed = parseFilterItem(f);
+          if (!parsed) continue;
+          const norm = parsed.url.toLowerCase();
+          if (seenUrls.has(norm)) continue;
+          seenUrls.add(norm);
+          validFilters.push(parsed);
+        }
+
+        if (validFilters.length > 0) {
+          try {
+            await addProfileListsBulk(createdProfileId, validFilters);
+          } catch (bulkErr) {
+            console.warn("[ProfileImport] Bulk filter import failed, falling back to sequential:", bulkErr);
+            for (const f of validFilters) {
+              try {
+                await addCustomProfileList(createdProfileId, f.url);
+              } catch (seqErr) {
+                console.warn("[ProfileImport] Failed to sequentially import filter:", f.url, seqErr);
               }
             }
           }
@@ -153,6 +329,7 @@ export const useImportProfile = (onRefresh?: () => void) => {
       }
     } finally {
       setImporting(false);
+      if (e.target) e.target.value = "";
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
