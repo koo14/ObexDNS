@@ -12,6 +12,7 @@
  */
 
 import { isIPv4, isIPv6, createCidrMatcher } from "./cidr";
+import { parseDnsStamp } from "./dnsStamp";
 
 export { isIPv4, isIPv6 } from "./cidr";
 
@@ -35,6 +36,22 @@ export const USERNAME_REGEX = /^[a-z_][a-z0-9_-]{4,31}$/;
 export const AP_NAME_REGEX = /^[a-zA-Z0-9_-]{1,30}$/;
 
 /**
+ * Passkey name validation regular expression.
+ * Requirements: 1-30 characters, containing letters, numbers, underscores, or hyphens (same as AP_NAME_REGEX).
+ */
+export const PASSKEY_NAME_REGEX = /^[a-zA-Z0-9_-]{1,30}$/;
+
+/**
+ * Validates whether a passkey name conforms to the required format.
+ *
+ * @param name - The passkey name to validate.
+ * @returns True if valid.
+ */
+export function validatePasskeyName(name: string): boolean {
+  return PASSKEY_NAME_REGEX.test(name);
+}
+
+/**
  * Profile name validation regular expression.
  * Requirements: 1-30 characters, containing letters, numbers, underscores, hyphens, or parentheses.
  */
@@ -42,9 +59,9 @@ export const PROFILE_NAME_REGEX = /^[\p{L}\p{N}_ ()-]{1,30}$/u;
 
 /**
  * Access key validation regular expression.
- * Requirements: 6-12 characters, containing only letters and numbers.
+ * Requirements: 5-12 characters, containing only letters and numbers (supporting 5-char z-base-32 tokens).
  */
-export const ACCESS_KEY_REGEX = /^[a-zA-Z0-9]{6,12}$/;
+export const ACCESS_KEY_REGEX = /^[a-zA-Z0-9]{5,12}$/;
 
 /**
  * TOTP token validation regular expression.
@@ -125,7 +142,7 @@ export function isPublicInternetIP(ip: string): boolean {
 
 /**
  * Checks whether the given URL is safe to fetch (prevents SSRF).
- * - Restricts to HTTP/HTTPS/TCP protocols.
+ * - Restricts to HTTP/HTTPS/TCP/TLS/DNS Stamp protocols.
  * - Blocks local, loopback, and private IP ranges.
  * - Blocks common metadata hostnames.
  * @param urlString The URL to validate.
@@ -133,9 +150,16 @@ export function isPublicInternetIP(ip: string): boolean {
  */
 export function isSafeUrl(urlString: string): boolean {
   try {
+    if (urlString.startsWith('sdns://')) {
+      const stamp = parseDnsStamp(urlString);
+      return isSafeUrl(stamp.resolvedUrl);
+    }
+
     let parseableUrl: string;
     if (urlString.startsWith('tcp://')) {
       parseableUrl = urlString.replace('tcp://', 'http://');
+    } else if (urlString.startsWith('tls://')) {
+      parseableUrl = urlString.replace('tls://', 'http://');
     } else if (urlString.startsWith('http://') || urlString.startsWith('https://')) {
       parseableUrl = urlString;
     } else {

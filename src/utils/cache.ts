@@ -6,25 +6,32 @@ export const cacheUtils = {
     return `https://obex.local/cache/${encodeURIComponent(key)}`;
   },
 
-  async get<T>(cache: Cache, key: string): Promise<T | null> {
+  async get<T>(cache: Cache | null | undefined, key: string): Promise<T | null> {
+    if (!cache) return null;
     const url = this.generateCacheUrl(key);
     const response = await cache.match(url);
     if (!response) return null;
     return response.json();
   },
 
-  async set(cache: Cache, key: string, data: any, ttlSeconds: number): Promise<void> {
+  async set(cache: Cache | null | undefined, key: string, data: any, ttlSeconds: number, tags: string[] = []): Promise<void> {
+    if (!cache) return;
     const url = this.generateCacheUrl(key);
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Cache-Control": `public, max-age=${ttlSeconds}`
+    };
+    if (tags && tags.length > 0) {
+      headers["Cache-Tag"] = tags.join(",");
+    }
     const response = new Response(JSON.stringify(data), {
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": `public, max-age=${ttlSeconds}`
-      }
+      headers
     });
     return cache.put(url, response);
   },
 
-  async delete(cache: Cache, key: string): Promise<boolean> {
+  async delete(cache: Cache | null | undefined, key: string): Promise<boolean> {
+    if (!cache) return false;
     const url = this.generateCacheUrl(key);
     return cache.delete(url);
   },
@@ -32,7 +39,8 @@ export const cacheUtils = {
   /**
    * 速率限制检查 (滑动窗口)
    */
-  async isRateLimited(cache: Cache, key: string, limit: number, windowSec: number): Promise<boolean> {
+  async isRateLimited(cache: Cache | null | undefined, key: string, limit: number, windowSec: number): Promise<boolean> {
+    if (!cache) return false;
     const cacheKey = `ratelimit:${key}`;
     const current = await this.get<{ count: number, reset: number }>(cache, cacheKey);
     

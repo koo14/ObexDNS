@@ -15,6 +15,7 @@ import { handleSystemRequest } from './api/system';
 import { handleDoHRequest } from './api/doh';
 import { handleScheduled } from './cron';
 import { handleMapDataRequest } from './api/mapData';
+import { isUsableJwtSecret } from './lib/jwt';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -45,7 +46,7 @@ export default {
         } catch (e) {
           isDbMissing = true;
         }
-        const isJwtSecretMissing = !env.JWT_SECRET;
+        const isJwtSecretMissing = !isUsableJwtSecret(env.JWT_SECRET);
 
         if (isDbMissing || isJwtSecretMissing) {
           return new Response(JSON.stringify({
@@ -63,13 +64,19 @@ export default {
         }
 
         // Authenticate request
-        currentUser = await getCurrentUser(request, env);
+        currentUser = await getCurrentUser(request, env, ctx);
 
         const isPublicRoute = [
-          '/api/auth/login', '/api/auth/signup', '/api/auth/prelogin', '/api/auth/check-username',
+          '/api/auth/login', 
+          '/api/auth/signup', 
+          '/api/auth/prelogin', 
+          '/api/auth/check-username',
           '/api/auth/unlock-session',
-          '/api/clientinfo', '/api/regions'
-        ].includes(url.pathname) || url.pathname.startsWith('/api/icon/');
+          '/api/clientinfo',
+          '/api/regions'
+        ].includes(url.pathname) || 
+        url.pathname.startsWith('/api/icon/') || 
+        url.pathname.startsWith('/api/presets/');
         const isMobileConfigRoute = url.pathname.endsWith('/mobileconfig');
 
         // Check authentication boundary
@@ -100,8 +107,7 @@ export default {
           url.pathname === '/api/clientinfo' ||
           url.pathname === '/api/regions' ||
           url.pathname === '/api/substitute' ||
-          url.pathname === '/api/presets/upstreams' ||
-          url.pathname === '/api/presets/filters' ||
+          url.pathname.startsWith('/api/presets/') ||
           url.pathname.startsWith('/api/icon/')
         ) {
           return handleSystemRequest(request, env);
@@ -130,7 +136,7 @@ export default {
         });
       }
 
-      // DNS-over-HTTPS (DoH) Route: /<6-12 digit profile key>
+      // DNS-over-HTTPS (DoH) Route: /<5-12 char profile key or access point token>
       const rawKey = url.pathname.slice(1); 
       const isKeyValid = ACCESS_KEY_REGEX.test(rawKey);
       const isDoHRequest = request.method === 'POST' || 
@@ -156,7 +162,7 @@ export default {
           } catch (e) {
             isDbMissing = true;
           }
-          const isJwtSecretMissing = !env.JWT_SECRET;
+          const isJwtSecretMissing = !isUsableJwtSecret(env.JWT_SECRET);
 
           let configStr = "{}";
           try {

@@ -1,15 +1,50 @@
+/**
+ * Resolves the highest configured KEK version (e.g. "v1", "v2", "v101") from environment variables.
+ * Scans all environment keys matching KEK_v<N> or KEK_V<N> dynamically without hardcoded version caps.
+ * Returns null if no KEK is configured, disabling envelope encryption.
+ *
+ * @param env - Cloudflare Workers environment bindings or Node.js process.env object
+ * @returns Active KEK version string (e.g. "v1") or null if no KEK configured
+ */
 export function getActiveKekVersion(env: any): string | null {
-  if (!env) return null;
+  if (!env || typeof env !== "object") return null;
   let maxVer = 0;
-  for (let ver = 1; ver <= 100; ver++) {
-    const val = env[`KEK_v${ver}`] || env[`KEK_V${ver}`];
-    if (val !== undefined && val !== null && val !== "") {
-      if (ver > maxVer) {
-        maxVer = ver;
+  for (const key of Object.keys(env)) {
+    const match = key.match(/^KEK_[vV](\d+)$/);
+    if (match) {
+      const val = env[key];
+      if (val !== undefined && val !== null && val !== "") {
+        const ver = parseInt(match[1], 10);
+        if (!isNaN(ver) && ver > maxVer) {
+          maxVer = ver;
+        }
       }
     }
   }
-  return maxVer > 0 ? `v${maxVer}` : null;
+  if (maxVer > 0) return `v${maxVer}`;
+  return null;
+}
+
+/**
+ * Retrieves the raw KEK secret string for a given version.
+ * Note: If version is "v0" or "default" and no explicit KEK_v0 is set, falls back to env.JWT_SECRET
+ * for backward compatibility with legacy deployments that encrypted credentials using JWT_SECRET.
+ *
+ * @param version - KEK version string (e.g. "v1", "v0")
+ * @param env - Cloudflare Workers environment bindings or Node.js process.env object
+ * @returns Raw KEK secret string or null if not found
+ */
+export function getKekSecret(version: string, env: any): string | null {
+  if (!env) return null;
+  const val = env[`KEK_${version}`] || env[`KEK_${version.toUpperCase()}`];
+  if (val && typeof val === "string" && val.trim() !== "") {
+    return val;
+  }
+  // Backward compatibility: fallback to JWT_SECRET for legacy v0/default data
+  if ((version === "v0" || version === "default") && env.JWT_SECRET && typeof env.JWT_SECRET === "string" && env.JWT_SECRET.trim() !== "") {
+    return env.JWT_SECRET;
+  }
+  return null;
 }
 
 function toBase64(bytes: Uint8Array): string {
@@ -79,7 +114,7 @@ export async function encryptEnvelope(
     return null;
   }
 
-  const kekSecret = env[`KEK_${activeVersion}`] || env[`KEK_${activeVersion.toUpperCase()}`];
+  const kekSecret = getKekSecret(activeVersion, env);
   if (!kekSecret || typeof kekSecret !== "string" || kekSecret.trim() === "") {
     throw new Error(`KEK version ${activeVersion} is missing or invalid in environment variables`);
   }
@@ -130,45 +165,71 @@ export async function encryptEnvelope(
 
 /**
  * Decrypts envelope encrypted data using the stored DEK and KEK.
+ * If decryption fails using the specified KEK version (e.g. missing KEK or rotated environment),
+ * it falls back to trying KEK "v0" (derived from JWT_SECRET) to preserve backward compatibility for legacy deployments.
  */
 export async function decryptEnvelope(
   dataEncryptedStr: string,
   dekEncryptedStr: string,
   env: any
 ): Promise<string> {
-  const dataEncrypted: EnvelopeEncryptedData = JSON.parse(dataEncryptedStr);
-  const dekEncrypted: EnvelopeEncryptedDek = JSON.parse(dekEncryptedStr);
-
-  const kekSecret = env[`KEK_${dekEncrypted.kek_version}`] || env[`KEK_${dekEncrypted.kek_version.toUpperCase()}`];
-  if (!kekSecret || typeof kekSecret !== "string" || kekSecret.trim() === "") {
-    throw new Error(`Required KEK version ${dekEncrypted.kek_version} is missing or invalid in environment variables`);
+  let dataEncrypted: EnvelopeEncryptedData;
+  let dekEncrypted: EnvelopeEncryptedDek;
+  try {
+    dataEncrypted = JSON.parse(dataEncryptedStr);
+    dekEncrypted = JSON.parse(dekEncryptedStr);
+  } catch (parseErr) {
+    throw new Error(`Failed to parse envelope payload: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
   }
 
-  const kekKey = await importKek(kekSecret);
+  const attemptDecrypt = async (kekVersion: string): Promise<string> => {
+    const kekSecret = getKekSecret(kekVersion, env);
+    if (!kekSecret || typeof kekSecret !== "string" || kekSecret.trim() === "") {
+      throw new Error(`Required KEK version ${kekVersion} is missing or invalid in environment variables`);
+    }
 
-  // 1. Decrypt the DEK using the KEK
-  const encryptedDekBytes = fromBase64(dekEncrypted.ciphertext);
-  const dekIv = fromBase64(dekEncrypted.iv);
-  const decryptedDekBuffer = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: dekIv },
-    kekKey,
-    encryptedDekBytes
-  );
+    const kekKey = await importKek(kekSecret);
 
-  const dekBytes = new Uint8Array(decryptedDekBuffer);
-  const dekKey = await importDek(dekBytes);
+    // 1. Decrypt the DEK using the KEK
+    const encryptedDekBytes = fromBase64(dekEncrypted.ciphertext);
+    const dekIv = fromBase64(dekEncrypted.iv);
+    const decryptedDekBuffer = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: dekIv },
+      kekKey,
+      encryptedDekBytes
+    );
 
-  // 2. Decrypt the data using the decrypted DEK
-  const encryptedDataBytes = fromBase64(dataEncrypted.ciphertext);
-  const dataIv = fromBase64(dataEncrypted.iv);
-  const decryptedDataBuffer = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: dataIv },
-    dekKey,
-    encryptedDataBytes
-  );
+    const dekBytes = new Uint8Array(decryptedDekBuffer);
+    const dekKey = await importDek(dekBytes);
 
-  const decoder = new TextDecoder();
-  return decoder.decode(decryptedDataBuffer);
+    // 2. Decrypt the data using the decrypted DEK
+    const encryptedDataBytes = fromBase64(dataEncrypted.ciphertext);
+    const dataIv = fromBase64(dataEncrypted.iv);
+    const decryptedDataBuffer = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: dataIv },
+      dekKey,
+      encryptedDataBytes
+    );
+
+    const decoder = new TextDecoder();
+    return decoder.decode(decryptedDataBuffer);
+  };
+
+  try {
+    return await attemptDecrypt(dekEncrypted.kek_version);
+  } catch (primaryErr) {
+    // If decryption failed or KEK was missing, and the failed version wasn't already "v0",
+    // fallback to "v0" (JWT_SECRET) for legacy compatibility.
+    if (dekEncrypted.kek_version !== "v0" && env?.JWT_SECRET && typeof env.JWT_SECRET === "string" && env.JWT_SECRET.trim() !== "") {
+      try {
+        return await attemptDecrypt("v0");
+      } catch (fallbackErr) {
+        // Both primary and fallback failed, throw primary error
+        throw primaryErr;
+      }
+    }
+    throw primaryErr;
+  }
 }
 
 /**
@@ -182,8 +243,14 @@ export async function rotateEnvelopeDek(
 ): Promise<string | null> {
   if (!env) return null;
 
-  const dekEncrypted: EnvelopeEncryptedDek = JSON.parse(dekEncryptedStr);
-  const currentKekVersion = dekEncrypted.kek_version; // e.g. "v1"
+  let dekEncrypted: EnvelopeEncryptedDek;
+  try {
+    dekEncrypted = JSON.parse(dekEncryptedStr);
+  } catch {
+    return null;
+  }
+
+  const currentKekVersion = dekEncrypted.kek_version; // e.g. "v0" or "v1"
   const currentVersionNumber = parseInt(currentKekVersion.replace(/^v/, ""), 10);
   if (isNaN(currentVersionNumber)) {
     return null;
@@ -191,7 +258,7 @@ export async function rotateEnvelopeDek(
 
   const nextVersionNumber = currentVersionNumber + 1;
   const nextKekVersion = `v${nextVersionNumber}`;
-  const nextKekSecret = env[`KEK_${nextKekVersion}`] || env[`KEK_${nextKekVersion.toUpperCase()}`];
+  const nextKekSecret = getKekSecret(nextKekVersion, env);
 
   if (!nextKekSecret || typeof nextKekSecret !== "string" || nextKekSecret.trim() === "") {
     // Next version not configured/available yet
@@ -199,7 +266,7 @@ export async function rotateEnvelopeDek(
   }
 
   // 1. Decrypt the DEK with current KEK
-  const currentKekSecret = env[`KEK_${currentKekVersion}`] || env[`KEK_${currentKekVersion.toUpperCase()}`];
+  const currentKekSecret = getKekSecret(currentKekVersion, env);
   if (!currentKekSecret || typeof currentKekSecret !== "string" || currentKekSecret.trim() === "") {
     throw new Error(`Current KEK version ${currentKekVersion} required for rotation is missing or invalid in environment`);
   }

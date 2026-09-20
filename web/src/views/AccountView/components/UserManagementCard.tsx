@@ -1,19 +1,40 @@
-import React, { useState } from "react";
-import { Card, Elevation, H4, Button, Intent, HTMLTable, Dialog, FormGroup, InputGroup, HTMLSelect, Tag } from "@blueprintjs/core";
+import React, { useState, useEffect } from "react";
+import {
+  Card,
+  Elevation,
+  H4,
+  Button,
+  Intent,
+  HTMLTable,
+  Dialog,
+  FormGroup,
+  InputGroup,
+  HTMLSelect,
+  Tag,
+  Switch
+} from "@blueprintjs/core";
 import { ShieldCheck, UserPlus, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { formatDateTime } from "../../../utils/date";
 import { PASSWORD_REGEX, USERNAME_REGEX, hashPasswordClient } from "../../../utils/auth";
 import type { UserInfo } from "../../../services";
-import { createUser, deleteUser } from "../../../services";
+import { createUser, deleteUser, updateSystemSettings } from "../../../services";
 
 export interface UserManagementCardProps {
   users: UserInfo[];
   currentUserId: string;
   onRefresh: () => void;
+  registrationEnabled?: boolean;
+  onRefreshSettings?: () => void;
 }
 
-export const UserManagementCard: React.FC<UserManagementCardProps> = ({ users, currentUserId, onRefresh }) => {
+export const UserManagementCard: React.FC<UserManagementCardProps> = ({
+  users,
+  currentUserId,
+  onRefresh,
+  registrationEnabled = true,
+  onRefreshSettings,
+}) => {
   const { t } = useTranslation();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newUsername, setNewUsername] = useState("");
@@ -21,6 +42,27 @@ export const UserManagementCard: React.FC<UserManagementCardProps> = ({ users, c
   const [newUserRole, setNewUserRole] = useState<'admin' | 'user'>('user');
   const [createLoading, setCreateLoading] = useState(false);
   const [showNewUserPassword, setShowNewUserPassword] = useState(false);
+  const [isRegistrationEnabled, setIsRegistrationEnabled] = useState(registrationEnabled);
+  const [toggleLoading, setToggleLoading] = useState(false);
+
+  useEffect(() => {
+    setIsRegistrationEnabled(registrationEnabled);
+  }, [registrationEnabled]);
+
+  const handleToggleRegistration = async (checked: boolean) => {
+    setIsRegistrationEnabled(checked);
+    setToggleLoading(true);
+    try {
+      await updateSystemSettings({ registration_enabled: String(checked) });
+      onRefreshSettings?.();
+    } catch (e: any) {
+      console.error(e);
+      setIsRegistrationEnabled(!checked);
+      alert(e.message || t("common.errorNetwork", "Network error"));
+    } finally {
+      setToggleLoading(false);
+    }
+  };
 
   const handleCreateUser = async () => {
     if (!USERNAME_REGEX.test(newUsername)) { alert(t("account.formatTipUsername")); return; }
@@ -51,12 +93,21 @@ export const UserManagementCard: React.FC<UserManagementCardProps> = ({ users, c
 
   return (
     <>
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <ShieldCheck size={20} className="text-red-500" />
           <H4 style={{ margin: 0 }}>{t("account.userManagement")}</H4>
         </div>
-        <Button className="whitespace-nowrap" icon={<UserPlus size={16} />} intent={Intent.SUCCESS} text={t("account.createUser")} onClick={() => setIsDialogOpen(true)} />
+        <div className="flex items-center gap-4 flex-wrap">
+          <Switch
+            label={t("account.enableRegistration", "开放新用户注册")}
+            checked={isRegistrationEnabled}
+            disabled={toggleLoading}
+            onChange={(e) => handleToggleRegistration(e.currentTarget.checked)}
+            className="mb-0"
+          />
+          <Button className="whitespace-nowrap" icon={<UserPlus size={16} />} intent={Intent.SUCCESS} text={t("account.createUser")} onClick={() => setIsDialogOpen(true)} />
+        </div>
       </div>
       <Card elevation={Elevation.ONE} className="p-0 overflow-hidden overflow-x-auto">
         <HTMLTable interactive striped className="w-full">
@@ -64,7 +115,7 @@ export const UserManagementCard: React.FC<UserManagementCardProps> = ({ users, c
             <tr>
               <th>{t("account.username")}</th>
               <th>{t("account.role")}</th>
-              <th>2FA</th>
+              <th>MFA</th>
               <th>ID</th>
               <th>{t("account.createdAt")}</th>
               <th>{t("account.lastActive")}</th>
@@ -78,17 +129,29 @@ export const UserManagementCard: React.FC<UserManagementCardProps> = ({ users, c
                 <td className="font-bold">{u.username}</td>
                 <td><Tag minimal intent={u.role === 'admin' ? Intent.DANGER : Intent.NONE}>{u.role === 'admin' ? t("account.roleAdmin") : t("account.roleUser")}</Tag></td>
                 <td>
-                  {u.totp_enabled ? (
-                    <Tag minimal intent={Intent.SUCCESS}>TOTP</Tag>
-                  ) : (
-                    <Tag minimal intent={Intent.NONE} style={{ color: "#8a9ba8" }}>无</Tag>
-                  )}
+                  <div className="flex flex-wrap gap-1">
+                    {Boolean(u.totp_enabled) && <Tag minimal intent={Intent.SUCCESS}>TOTP</Tag>}
+                    {Boolean(u.passkeys_count && u.passkeys_count > 0) && <Tag minimal intent={Intent.PRIMARY}>Passkey</Tag>}
+                    {!u.totp_enabled && !(u.passkeys_count && u.passkeys_count > 0) && (
+                      <Tag minimal intent={Intent.NONE} style={{ color: "#8a9ba8" }}>{t("account.mfaNone", "无")}</Tag>
+                    )}
+                  </div>
                 </td>
                 <td><code className="text-xs">{u.id}</code></td>
                 <td className="text-xs text-gray-500">{u.created_at ? formatDateTime(new Date(u.created_at * 1000)) : '-'}</td>
                 <td className="text-xs text-gray-500">{u.last_active_at ? formatDateTime(new Date(u.last_active_at * 1000)) : '-'}</td>
                 <td className="text-xs text-gray-500">{u.last_resolve_at ? formatDateTime(new Date(u.last_resolve_at * 1000)) : '-'}</td>
-                <td className="text-right"><Button minimal intent={Intent.DANGER} icon={<Trash2 size={14} />} disabled={u.id === currentUserId} onClick={() => handleDeleteUser(u.id)} /></td>
+                <td className="text-right">
+                  <div className="inline-flex items-center gap-1">
+                    <Button
+                      minimal
+                      intent={Intent.DANGER}
+                      icon={<Trash2 size={14} />}
+                      disabled={u.id === currentUserId}
+                      onClick={() => handleDeleteUser(u.id)}
+                    />
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>

@@ -4,7 +4,7 @@
   <p>基于 Cloudflare Workers & D1 的 Protective DNS 解析服务</p>
   <p>保护您的互联网第一跳</p>
   <p align="center">
-    <a href="README.md">English </a> | 简体中文 | <a href="README_zh-TW.md">正體中文</a>
+    <a href="README.md">English </a> | 中文 (简体) | <a href="README_zh-TW.md">中文 (正體)</a>
   </p>
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
@@ -158,7 +158,7 @@ DoH (RFC 8484) 是一种通过加密的 HTTPS 连接进行 DNS 查询的协议�
 
 - **Node.js**: v18.x 或更高版本
 - **Package Manager**: npm
-- **Cloudflare Account**: 需要开启 Workers 和 D1 权限
+- **Cloudflare Account**: 需要启用 Workers 和 D1 权限
 
 #### 本地运行与部署步骤
 

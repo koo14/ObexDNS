@@ -25,7 +25,7 @@ export class SessionModel {
 
   async getSessionWithUser(sessionId: string): Promise<any> {
     const session = await this.db.prepare(`
-      SELECT sessions.id as session_id, sessions.user_id, sessions.created_at, sessions.expires_at, sessions.ip_address, sessions.user_agent, sessions.latitude, sessions.longitude, sessions.rotation_counter, sessions.last_active_at, sessions.is_paused,
+      SELECT sessions.id as id, sessions.id as session_id, sessions.user_id, sessions.created_at, sessions.expires_at, sessions.ip_address, sessions.user_agent, sessions.latitude, sessions.longitude, sessions.rotation_counter, sessions.last_active_at, sessions.is_paused,
              users.id as u_id, users.username, users.role, users.pin_hash, users.session_lock_timeout
       FROM sessions
       INNER JOIN users ON sessions.user_id = users.id
@@ -109,6 +109,11 @@ export class SessionModel {
 
   async deleteSession(id: string): Promise<boolean> {
     const result = await this.db.prepare("DELETE FROM sessions WHERE id = ?").bind(id).run();
+    return result.success;
+  }
+
+  async deleteAllByUserId(userId: string): Promise<boolean> {
+    const result = await this.db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId).run();
     return result.success;
   }
 

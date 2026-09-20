@@ -1,3 +1,4 @@
+import { D1PreparedStatement } from "@cloudflare/workers-types";
 import { Env, ExecutionContext, ProfileSettings, ResolutionLog } from "../types";
 import { LogModel, generateLogId } from "../models/log";
 import { cacheUtils } from "../utils/cache";
@@ -5,11 +6,11 @@ import { cacheUtils } from "../utils/cache";
 /** In-memory batch queue of logs waiting to be flushed to D1 */
 const logBatchQueue: ResolutionLog[] = [];
 
-/** Maximum number of log statements in a single db.batch() transaction */
+/** Maximum number of statements in a single db.batch() transaction */
 const MAX_BATCH_SIZE = 50;
 
-/** Debounce time window for micro-batch flushing (10 seconds) */
-const FLUSH_INTERVAL_MS = 10_000;
+/** Debounce time window for micro-batch flushing (15 seconds) */
+const FLUSH_INTERVAL_MS = 15_000;
 
 /** Circuit breaker cooldown duration when D1 write quota is exceeded (1 hour) */
 const CIRCUIT_BREAKER_COOLDOWN_SEC = 3600;
@@ -78,7 +79,7 @@ export async function tripWriteCircuitBreaker(cache?: any): Promise<void> {
 }
 
 /**
- * Flushes a batch of up to MAX_BATCH_SIZE logs to D1 via db.batch().
+ * Flushes a batch of logs to D1 via db.batch().
  *
  * @param env Cloudflare Worker environment bindings
  */
@@ -96,14 +97,19 @@ export async function flushLogBatch(env: Env): Promise<void> {
     return;
   }
 
-  // Atomically extract up to MAX_BATCH_SIZE items from the front of the queue
+  // Atomically extract up to MAX_BATCH_SIZE raw logs from the front of the queue
   const logsToFlush = logBatchQueue.splice(0, MAX_BATCH_SIZE);
+
   if (logsToFlush.length === 0) {
     return;
   }
 
   const logModel = new LogModel(env.DB);
-  const statements = logsToFlush.map((log) => logModel.createInsertStatement(log));
+  const statements: D1PreparedStatement[] = [];
+
+  for (const log of logsToFlush) {
+    statements.push(logModel.createInsertStatement(log));
+  }
 
   try {
     await env.DB.batch(statements);
@@ -118,11 +124,11 @@ export async function flushLogBatch(env: Env): Promise<void> {
     ) {
       await tripWriteCircuitBreaker(cache);
     } else {
-      console.warn(`[LogBatcher] Batch write failed (${logsToFlush.length} logs):`, errorMsg);
+      console.warn(`[LogBatcher] Batch write failed (${statements.length} stmts):`, errorMsg);
     }
   }
 
-  // If there are still items remaining in the queue, schedule the next batch
+  // If there are still items remaining in queue, schedule the next batch
   if (logBatchQueue.length > 0) {
     scheduleDeferredFlush(env);
   }
@@ -149,7 +155,7 @@ function scheduleDeferredFlush(env: Env): void {
 }
 
 /**
- * Enqueues a DNS resolution log for 10-second micro-batching and quota protection.
+ * Enqueues a DNS resolution log for 15-second micro-batching and quota protection.
  *
  * @param log ResolutionLog object to insert
  * @param settings Current profile settings
@@ -167,22 +173,31 @@ export function enqueueLog(
     return;
   }
 
-  // 2. Fast memory circuit-breaker check
+  // 2. Skip logging for PASS queries when skip_log_on_pass is enabled
+  const action = (log.action || "PASS").toUpperCase();
+  if (settings?.skip_log_on_pass && action === "PASS") {
+    return;
+  }
+
+  // 3. Fast memory circuit-breaker check
   if (memoryCircuitBreakerUntil > Date.now()) {
     return;
   }
 
-  // 3. Ensure unique id is assigned before queueing
+  // 4. Ensure unique id is assigned before queueing raw log
   if (!log.id) {
     log.id = generateLogId();
   }
 
-  // 4. Enqueue the log entry
+  // 5. Enqueue the raw log entry
   logBatchQueue.push(log);
 
-  // 5. Determine if an immediate flush is required or a deferred flush should be scheduled
+  // 6. Determine if an immediate flush is required or a deferred flush should be scheduled
   const now = Date.now();
-  if (logBatchQueue.length >= MAX_BATCH_SIZE || now - lastFlushTime >= FLUSH_INTERVAL_MS) {
+  if (
+    logBatchQueue.length >= MAX_BATCH_SIZE ||
+    now - lastFlushTime >= FLUSH_INTERVAL_MS
+  ) {
     ctx.waitUntil(flushLogBatch(env));
   } else {
     scheduleDeferredFlush(env);

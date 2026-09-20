@@ -17,9 +17,9 @@ export const USERNAME_REGEX = /^[a-z_][a-z0-9_-]{4,31}$/;
 export const PASSWORD_REGEX = /^[a-zA-Z\d~`!@#$%^&*()_\-+={[}\]|\\:;"'<,>.?\/]{12,100}$/;
 /**
  * Access key validation regular expression.
- * Requirements: 6-12 alphanumeric characters only.
+ * Requirements: 5-12 alphanumeric characters only (supporting 5-char z-base-32 tokens).
  */
-export const ACCESS_KEY_REGEX = /^[a-zA-Z0-9]{6,12}$/;
+export const ACCESS_KEY_REGEX = /^[a-zA-Z0-9]{5,12}$/;
 /**
  * TOTP token validation regular expression.
  * Requirements: exactly 6 digits.
@@ -36,10 +36,25 @@ export const PROFILE_NAME_REGEX = /^[\p{L}\p{N}_ ()-]{1,30}$/u;
  */
 export const AP_NAME_REGEX = /^[a-zA-Z0-9_-]{1,30}$/;
 /**
+ * Passkey name validation regular expression.
+ * Requirements: 1-30 characters, allowing letters, numbers, underscores, and hyphens (same as AP_NAME_REGEX).
+ */
+export const PASSKEY_NAME_REGEX = /^[a-zA-Z0-9_-]{1,30}$/;
+/**
  * PIN validation regular expression.
  * Requirements: exactly 4 digits.
  */
 export const PIN_REGEX = /^\d{4}$/;
+
+/**
+ * Validates whether a passkey name matches the required format (1-30 characters, alphanumeric, underscore, hyphen).
+ *
+ * @param name - The passkey name to validate.
+ * @returns True if valid.
+ */
+export function validatePasskeyName(name: string): boolean {
+  return PASSKEY_NAME_REGEX.test(name);
+}
 
 /**
  * Validates whether a username matches the required alphanumeric 5-15 character format.
@@ -214,6 +229,23 @@ export function formatApiErrorMessage(err: any, t: (key: string, options?: any) 
   if (bodyText === "password_leaked") {
     return t("auth.passwordLeaked", "Your password has been leaked.");
   }
+  if (
+    bodyText === "jwt_secret_preset" ||
+    bodyText.includes("jwt_secret_preset") ||
+    bodyText.includes("is a documentation placeholder")
+  ) {
+    return t("auth.jwtSecretPreset", "检测到正在使用预设的 JWT_SECRET，请在环境变量中修改并替换为自定义安全密钥后重新部署。");
+  }
+  if (
+    bodyText === "jwt_secret_missing" ||
+    bodyText.includes("jwt_secret_missing") ||
+    bodyText.includes("JWT_SECRET is missing")
+  ) {
+    return t("auth.jwtSecretMissing", "缺少 JWT_SECRET，请在环境变量中配置安全密钥后重新部署。");
+  }
+  if (bodyText === "jwt_secret_invalid") {
+    return t("auth.jwtSecretInvalid", "JWT_SECRET 密钥格式无效，请检查配置。");
+  }
 
   // If bodyText is short and doesn't contain HTML markup, return it directly
   if (bodyText && bodyText.length < 200 && !bodyText.includes("<") && !bodyText.includes(">")) {
@@ -384,3 +416,32 @@ export async function hashPin(pin: string, salt: string): Promise<string> {
 export async function hashChallenge(pinHash: string, nonce: string): Promise<string> {
   return hashPasswordClient(pinHash, nonce, 10000);
 }
+
+/**
+ * Validates a single 6-digit recovery key group using the Modulo 11 check algorithm.
+ * Returns true if the 6-digit number is divisible by 11 with remainder 0.
+ *
+ * @param group - 6-digit numeric string
+ * @returns boolean indicating validity
+ */
+export function validateRecoveryGroup(group: string): boolean {
+  if (!/^\d{6}$/.test(group.trim())) return false;
+  const num = parseInt(group.trim(), 10);
+  return num % 11 === 0;
+}
+
+/**
+ * Formats a raw 30-digit recovery string into 5 groups of 6 digits separated by hyphens.
+ *
+ * @param raw - Raw numeric string
+ * @returns Formatted recovery key
+ */
+export function formatRecoveryKey(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 30);
+  const groups: string[] = [];
+  for (let i = 0; i < digits.length; i += 6) {
+    groups.push(digits.slice(i, i + 6));
+  }
+  return groups.join('-');
+}
+

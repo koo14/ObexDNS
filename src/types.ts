@@ -16,6 +16,7 @@ export interface Env {
   INACTIVITY_THRESHOLD_DAYS?: string | number;
   PRESET_UPSTREAMS?: string;
   PRESET_EXTERNAL_FILTERS?: string;
+  PRESET_ECH_FRONTING_DOMAINS?: string;
   BLOOM_FALSE_POSITIVE_RATE?: string | number;
   THROTTLE_ACTIVE_SEC?: string | number;
   SYNC_PROFILE_INTERVAL_SEC?: string | number;
@@ -29,6 +30,13 @@ export interface Env {
   NORMAL_USER_MAX_LOG_RETENTION_DAYS?: string | number;
   NORMAL_USER_DEFAULT_LOG_RETENTION_DAYS?: string | number;
   FAIL_OPEN_UPSTREAM?: string;
+  CF_ZONE_ID?: string;
+  CF_PURGE_TOKEN?: string;
+  SESSION_LAST_ACTIVE_UPDATE_INTERVAL?: string | number;
+  AUTH_CACHE_TTL_SEC?: string | number;
+  LOG_CLEANUP_BATCH_LIMIT?: string | number;
+  LOG_CLEANUP_DAILY_BUDGET?: string | number;
+  DOMAIN_ROLLUP_MIN_COUNT?: string | number;
   [key: string]: any;
 }
 
@@ -39,6 +47,7 @@ export interface User {
   hashed_password?: string;
   totp_enabled?: number;       // 0 | 1
   totp_skip_password?: number; // 0 | 1 — when 1, login skips password check
+  passkeys_count?: number;
   created_at?: number;
   last_active_at?: number;
   last_resolve_at?: number;
@@ -70,6 +79,7 @@ export interface ProfileSettings {
     ipv6_cidr?: string;
   };
   log_retention_days: number;
+  skip_log_on_pass?: boolean;
   default_policy: 'ALLOW' | 'BLOCK';
   block_mode?: 'NULL_IP' | 'NXDOMAIN' | 'NODATA' | 'CUSTOM_IP';
   custom_block_ipv4?: string;
@@ -130,6 +140,10 @@ export interface ResolutionResult {
     upstream_url: string;
     method: string;
     status: number;
+    status_text?: string;
+    error_detail?: string;
+    response_body?: string;
+    cf_ray?: string;
   };
 }
 
@@ -146,6 +160,9 @@ export interface ResolutionLog {
   reason?: string;
   answer?: string;
   dest_geoip?: string;
+  dest_country_code?: string | null;
+  dest_country?: string | null;
+  dest_isp?: string | null;
   latency?: number;
   ecs?: string;
   upstream?: string;
@@ -176,4 +193,18 @@ export interface AccessPoint {
   token: string;
   created_at: number;
   updated_at: number;
+}
+
+export interface Passkey {
+  id: string;
+  user_id: string;
+  name: string;
+  credential_id: string;
+  public_key: string;
+  algorithm: number;
+  sign_count: number;
+  transports?: string | null;
+  aaguid?: string | null;
+  created_at: number;
+  last_used_at?: number | null;
 }

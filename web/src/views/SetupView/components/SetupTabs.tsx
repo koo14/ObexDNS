@@ -1,15 +1,18 @@
 import React from "react";
 import { Tabs, Tab, H5, Button, Icon, Intent, Tag, Callout } from "@blueprintjs/core";
-import { Globe, AppWindowMac, Monitor, Terminal, Smartphone } from "lucide-react";
+import { Globe, AppWindowMac, Monitor, Terminal, Smartphone, Router, ExternalLink } from "lucide-react";
 import { clsx } from "clsx";
 import { useTranslation } from "react-i18next";
 import type {  RegionConfigItem  } from "../../../config/regions";
-import { generateMobileConfig } from "../../../utils/mobileconfig";
+import { generateMobileConfig, formatProfileLabel, extractDomain } from "../../../utils/mobileconfig";
+import { StepStampWatermark } from "./StepStampWatermark";
 
 export interface SetupTabsProps {
   isMobile: boolean;
   copyToClipboard: (text: string) => void;
   profileKey: string;
+  profileName?: string;
+  accessPointName?: string;
   allRegions: Record<string, RegionConfigItem>;
   selectedRegion: string;
   currentIps: { ip: string; area: string | null }[];
@@ -19,6 +22,8 @@ export const SetupTabs: React.FC<SetupTabsProps> = ({
   isMobile,
   copyToClipboard,
   profileKey,
+  profileName,
+  accessPointName,
   allRegions,
   selectedRegion,
   currentIps,
@@ -26,24 +31,26 @@ export const SetupTabs: React.FC<SetupTabsProps> = ({
   const { t } = useTranslation();
 
   return (
-    <Tabs
-      id="setup-tabs"
-      renderActiveTabPanelOnly={true}
-      vertical={!isMobile} // 移动端使用水平 Tab
-      size="large"
-      className={clsx(
-        "bg-white dark:bg-gray-900 p-4 md:p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm setup-tabs-container",
-        isMobile && [
-          "[&_.bp6-tab-list]:overflow-x-auto!",
-          "[&_.bp6-tab-list]:flex-nowrap!",
-          "[&_.bp6-tab-list]:pb-1",
-          "[&_.bp6-tab-list]:scrollbar-none",
-          "[&_.bp6-tab-list]:[-ms-overflow-style:none]",
-          "[&_.bp6-tab-list::-webkit-scrollbar]:hidden",
-          "[&_.bp6-tab]:shrink-0",
-        ]
-      )}
-    >
+    <div className="group relative overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm">
+      <StepStampWatermark step={3} />
+      <Tabs
+        id="setup-tabs"
+        renderActiveTabPanelOnly={true}
+        vertical={!isMobile} // 移动端使用水平 Tab
+        size="large"
+        className={clsx(
+          "p-4 md:p-6 setup-tabs-container relative z-10 bg-transparent",
+          isMobile && [
+            "[&_.bp6-tab-list]:overflow-x-auto!",
+            "[&_.bp6-tab-list]:flex-nowrap!",
+            "[&_.bp6-tab-list]:pb-1",
+            "[&_.bp6-tab-list]:scrollbar-none",
+            "[&_.bp6-tab-list]:[-ms-overflow-style:none]",
+            "[&_.bp6-tab-list::-webkit-scrollbar]:hidden",
+            "[&_.bp6-tab]:shrink-0",
+          ]
+        )}
+      >
       <Tab
         id="browsers"
         title={
@@ -83,12 +90,23 @@ export const SetupTabs: React.FC<SetupTabsProps> = ({
                 text={t("setup.downloadConfig")}
                 icon="download"
                 onClick={() => {
-                  const xml = generateMobileConfig(profileKey, "DNS Worker", window.location.origin);
+                  const xml = generateMobileConfig({
+                    profileKey,
+                    profileName,
+                    accessPointName,
+                    origin: window.location.origin,
+                  });
                   const blob = new Blob([xml], { type: "application/x-apple-aspen-config" });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement("a");
                   a.href = url;
-                  a.download = `dns_worker-${profileKey}.mobileconfig`;
+                  const label = formatProfileLabel(profileName, accessPointName);
+                  const domain = extractDomain(window.location.origin);
+                  const fileTag = (label || domain)
+                    .replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, "_")
+                    .replace(/_+/g, "_")
+                    .replace(/^_|_$/g, "");
+                  a.download = `dns_worker-${fileTag}-${profileKey}.mobileconfig`;
                   a.click();
                   URL.revokeObjectURL(url);
                 }}
@@ -177,6 +195,51 @@ export const SetupTabs: React.FC<SetupTabsProps> = ({
       />
 
       <Tab
+        id="routeros"
+        title={
+          <span>
+            <Router size={16} className="inline mr-2" />
+            {t("setup.routeros")}
+          </span>
+        }
+        panel={
+          <div className="space-y-4 md:ml-4 mt-4 md:mt-0">
+            <H5 className="font-bold">{t("setup.routerosTitle")}</H5>
+            <p className="text-sm">{t("setup.routerosDesc")}</p>
+
+            <div className="mt-4">
+              <p className="text-sm font-bold mb-2">{t("setup.routerosStep1")}</p>
+              <div className="relative group">
+                <pre className="bg-gray-100 dark:bg-gray-800 p-4 rounded-lg overflow-x-auto text-xs font-mono border border-gray-200 dark:border-gray-700">
+                  <code>{`/ip dns set use-doh-server="${window.location.origin}/${profileKey}" verify-doh-cert=yes`}</code>
+                </pre>
+                <Button
+                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                  icon="duplicate"
+                  minimal
+                  small
+                  onClick={() => {
+                    copyToClipboard(`/ip dns set use-doh-server="${window.location.origin}/${profileKey}" verify-doh-cert=yes`);
+                  }}
+                />
+              </div>
+            </div>
+
+            <p className="text-sm">{t("setup.routerosNote")}</p>
+
+            <a
+              href="https://help.mikrotik.com/docs/spaces/ROS/pages/37748767/DNS"
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1 text-xs text-blue-500 hover:underline"
+            >
+              <ExternalLink size={10} /> {t("setup.routerosDocs")}
+            </a>
+          </div>
+        }
+      />
+
+      <Tab
         id="android"
         title={
           <span>
@@ -217,5 +280,6 @@ export const SetupTabs: React.FC<SetupTabsProps> = ({
         }
       />
     </Tabs>
+    </div>
   );
 };

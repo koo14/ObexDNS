@@ -4,7 +4,14 @@ import { Env } from "../types";
 export { getRequestCoordinates, calculateDistanceInKm } from "../utils/geo";
 
 // Re-export Crypto Utilities
-export { generateId, extractSaltHex, hmacSha256, generateSessionHash } from "../utils/crypto";
+export {
+  generateId,
+  generateZBase32Token,
+  ZBASE32_ALPHABET,
+  extractSaltHex,
+  hmacSha256,
+  generateSessionHash
+} from "../utils/crypto";
 
 // Re-export Cookie Management
 export {
@@ -43,13 +50,34 @@ export {
   invalidatePreauthSession,
   recordFailedPreauthAttempt
 } from "./preauth";
+import {
+  isUsableJwtSecret,
+  isStrongJwtSecret,
+  isPresetJwtSecret,
+  isMissingJwtSecret,
+  getJwtSecretStatus,
+  MIN_JWT_SECRET_LENGTH
+} from "./jwt";
+export {
+  isUsableJwtSecret,
+  isStrongJwtSecret,
+  isPresetJwtSecret,
+  isMissingJwtSecret,
+  getJwtSecretStatus,
+  MIN_JWT_SECRET_LENGTH
+};
 
 /**
- * Gets or creates the JWT secret from system settings.
+ * Gets or creates the JWT secret from environment configuration.
+ * Differentiates between missing JWT_SECRET and unedited preset JWT_SECRET.
  */
 export async function getOrCreateJwtSecret(env: Env): Promise<string> {
-  if (!env.JWT_SECRET) {
-    throw new Error("JWT_SECRET environment variable is missing.");
+  const status = getJwtSecretStatus(env.JWT_SECRET);
+  if (status === "missing") {
+    throw new Error("jwt_secret_missing");
   }
-  return env.JWT_SECRET;
+  if (status === "preset") {
+    throw new Error("jwt_secret_preset");
+  }
+  return env.JWT_SECRET!;
 }

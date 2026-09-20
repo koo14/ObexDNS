@@ -58,6 +58,7 @@ export async function handleProfilesCoreCollectionRequest(
       upstream: ["https://security.cloudflare-dns.com/dns-query"],
       ecs: { enabled: true, use_client_ip: true },
       log_retention_days: defaultRetentionDays,
+      skip_log_on_pass: false,
       default_policy: 'ALLOW',
       best_effort_ech: { enabled: false, fronting_domain: "cloudflare-ech.com" }
     };
@@ -97,7 +98,7 @@ export async function handleProfilesCoreRequest(
       const { name } = await request.json() as { name: string };
       if (!name || !PROFILE_NAME_REGEX.test(name)) return new Response("Invalid Profile Name format", { status: 400 });
       await profileModel.updateName(profileId, name);
-      ctx.waitUntil(pipeline.clearCache(profileId));
+      ctx.waitUntil(pipeline.clearCache(profileId, true, env));
       return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
     }
 
@@ -114,7 +115,7 @@ export async function handleProfilesCoreRequest(
   if (pathParts[3] === 'rotate_key' && request.method === 'POST') {
     const newKey = generateId(12);
     await profileModel.rotateKey(profileId, newKey);
-    ctx.waitUntil(pipeline.clearCache(profileId, false));
+    ctx.waitUntil(pipeline.clearCache(profileId, false, env));
     return new Response(JSON.stringify({ profile_key: newKey }), { headers: { 'Content-Type': 'application/json' } });
   }
 
@@ -145,11 +146,13 @@ export async function handleProfilesCoreRequest(
         const isHttps = url.startsWith('https://');
         const isHttp  = url.startsWith('http://');
         const isTcp   = url.startsWith('tcp://');
+        const isTls   = url.startsWith('tls://');
+        const isSdns  = url.startsWith('sdns://');
         // 裸 host[:port]：不含 / 且不含 scheme
         const isBareHost = !url.includes('//') && !url.startsWith('/');
 
-        if (!isHttps && !isHttp && !isTcp && !isBareHost) {
-          return new Response("Invalid upstream URL format. Only HTTP(S), TCP, or bare host[:port] are allowed.", { status: 400 });
+        if (!isHttps && !isHttp && !isTcp && !isTls && !isSdns && !isBareHost) {
+          return new Response("Invalid upstream URL format. Only HTTP(S), TCP, TLS (DoT), DNS Stamp (sdns://), or bare host[:port] are allowed.", { status: 400 });
         }
         // 统一规范化后做安全检查（防 SSRF）
         const normalized = isBareHost ? `tcp://${url}` : url;
@@ -174,12 +177,29 @@ export async function handleProfilesCoreRequest(
     // 仅在显式缩短日志留存期时触发主动清理，避免每次保存设置无谓执行 DELETE
     const newDays = newSettings.log_retention_days;
     if (newDays != null && Number(newDays) < oldDays) {
-      const threshold = Math.floor(Date.now() / 1000 - (Number(newDays) * 24 * 3600));
-      ctx.waitUntil(logModel.cleanup(profileId, threshold));
+      if (Number(newDays) === 0) {
+        // 关闭日志时彻底清空当前配置的历史日志与聚合记录
+        ctx.waitUntil((async () => {
+          try {
+            await env.DB.batch([
+              env.DB.prepare("DELETE FROM domain_hourly_rollups WHERE profile_id = ?").bind(profileId),
+              env.DB.prepare("DELETE FROM log_hourly_rollups WHERE profile_id = ?").bind(profileId),
+              env.DB.prepare("DELETE FROM client_hourly_rollups WHERE profile_id = ?").bind(profileId),
+              env.DB.prepare("DELETE FROM destination_hourly_rollups WHERE profile_id = ?").bind(profileId),
+              env.DB.prepare("DELETE FROM logs WHERE profile_id = ?").bind(profileId),
+            ]);
+          } catch (e: any) {
+            console.error("[Profile] Failed to purge logs on retention disable:", e?.message || e);
+          }
+        })());
+      } else {
+        const threshold = Math.floor(Date.now() / 1000 - (Number(newDays) * 24 * 3600));
+        ctx.waitUntil(logModel.cleanup(profileId, threshold));
+      }
     }
 
     // 设置变更仅清除配置缓存，保留 2.5MB 布隆过滤器缓存
-    await pipeline.clearCache(profileId, false);
+    ctx.waitUntil(pipeline.clearCache(profileId, false, env));
     return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
   }
 

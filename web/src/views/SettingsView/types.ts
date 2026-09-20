@@ -11,6 +11,7 @@ export interface ProfileSettings {
     ipv6_cidr?: string;
   };
   log_retention_days: number;
+  skip_log_on_pass?: boolean;
   default_policy: "ALLOW" | "BLOCK";
   block_mode?: "NULL_IP" | "NXDOMAIN" | "NODATA" | "CUSTOM_IP";
   custom_block_ipv4?: string;
@@ -49,6 +50,10 @@ export interface ResolutionResult {
     upstream_url: string;
     method: string;
     status: number;
+    status_text?: string;
+    error_detail?: string;
+    response_body?: string;
+    cf_ray?: string;
     response_text?: string;
     sent_dns_param?: string;
   };

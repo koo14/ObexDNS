@@ -5,6 +5,10 @@ export interface UserInfo {
   created_at?: number;
   totp_enabled?: boolean;
   totp_skip_password?: boolean;
+  passkeys_count?: number;
+  mfa_enabled?: boolean;
+  has_recovery_keys?: boolean;
+  recovery_keys_encrypted?: boolean;
   last_active_at?: number;
   last_resolve_at?: number;
   timezone?: string | null;
@@ -13,6 +17,7 @@ export interface UserInfo {
   pin_enabled?: boolean;
   session_lock_timeout?: number;
   max_log_retention_days?: number;
+  jwt_secret_warning?: boolean;
 }
 
 export interface ActivityEntry {
