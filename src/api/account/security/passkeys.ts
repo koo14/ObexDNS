@@ -1,16 +1,17 @@
 import { Env, User, ExecutionContext } from "../../../types";
 import { generateSessionHash } from "../../../utils/crypto";
-import { UserModel } from "../../../models/user";
+import { UserModel, StoredRecoveryKey } from "../../../models/user";
 import { ActivityLogModel } from "../../../models/activityLog";
 import { PasskeyModel } from "../../../models/passkey";
 import { PASSKEY_NAME_REGEX } from "../../../utils/validator";
 import {
   generateWebAuthnChallenge,
   base64UrlEncode,
-  verifyRegistrationResponse
+  verifyRegistrationResponse,
+  verifyAuthenticationResponse
 } from "../../../lib/webauthn";
 import { cacheUtils } from "../../../utils/cache";
-import { generateRecoveryKeys, hashRecoveryKey, StoredRecoveryKeyItem } from "../../../lib/totp";
+import { generateRecoveryKeys, hashRecoveryKey } from "../../../lib/totp";
 
 /**
  * Handles WebAuthn Passkeys lifecycle endpoints:
@@ -58,6 +59,24 @@ export async function handlePasskeysRequest(
       return new Response("No passkeys registered", { status: 400 });
     }
 
+    let targetPasskeyId: string | undefined;
+    try {
+      if (request.headers.get("content-type")?.includes("application/json")) {
+        const body = (await request.json()) as { passkeyId?: string };
+        targetPasskeyId = body?.passkeyId;
+      }
+    } catch {
+      // ignore empty or non-json body
+    }
+
+    const availablePasskeys = targetPasskeyId
+      ? existingPasskeys.filter((p) => p.id === targetPasskeyId)
+      : existingPasskeys;
+
+    if (availablePasskeys.length === 0) {
+      return new Response("Target passkey not found", { status: 404 });
+    }
+
     const challenge = generateWebAuthnChallenge();
     const requestUrl = new URL(request.url);
     const rpId = requestUrl.hostname;
@@ -69,8 +88,9 @@ export async function handlePasskeysRequest(
       rpId,
       timeout: 60000,
       userVerification: "preferred",
-      allowCredentials: existingPasskeys.map((p) => ({
+      allowCredentials: availablePasskeys.map((p) => ({
         id: p.credential_id,
+        passkey_id: p.id,
         type: "public-key",
         transports: p.transports ? JSON.parse(p.transports) : undefined
       }))
@@ -79,6 +99,85 @@ export async function handlePasskeysRequest(
     return new Response(JSON.stringify(options), {
       headers: { "Content-Type": "application/json" }
     });
+  }
+
+  // POST /api/account/passkeys/test — 验证通行密钥测试
+  if (subAction === "test" && request.method === "POST") {
+    const cache = (caches as any).default;
+    const cachedState = await cacheUtils.get<{ challenge: string; rpId: string }>(
+      cache,
+      `webauthn_auth_challenge:${user.id}`
+    );
+    if (!cachedState) {
+      return new Response("Test session expired, please try again", { status: 400 });
+    }
+
+    const body = (await request.json()) as {
+      credential?: any;
+      passkeyAssertion?: any;
+      id?: string;
+      response?: any;
+    };
+    const assertion = body.credential || body.passkeyAssertion || body;
+    if (!assertion || !assertion.response || !assertion.id) {
+      return new Response("Invalid credential data", { status: 400 });
+    }
+
+    const userPasskeys = await passkeyModel.listByUser(user.id);
+    const passkey = userPasskeys.find((p) => p.credential_id === assertion.id);
+    if (!passkey) {
+      return new Response("Passkey not recognized for this account", { status: 404 });
+    }
+
+    const requestUrl = new URL(request.url);
+    try {
+      const { signCount } = await verifyAuthenticationResponse({
+        clientDataJSON: assertion.response.clientDataJSON,
+        authenticatorData: assertion.response.authenticatorData,
+        signature: assertion.response.signature,
+        publicKeySpki: passkey.public_key,
+        algorithm: passkey.algorithm,
+        expectedChallenge: cachedState.challenge,
+        expectedOrigin: `${requestUrl.protocol}//${requestUrl.host}`,
+        expectedRpId: cachedState.rpId,
+        previousSignCount: passkey.sign_count
+      });
+
+      await passkeyModel.updateUsage(passkey.id, signCount);
+      await cacheUtils.delete(cache, `webauthn_auth_challenge:${user.id}`);
+      await activityLog.record(
+        user.id,
+        "passkey_verify_success",
+        clientIp,
+        userAgent,
+        { flow: "mfa_test", name: passkey.name, id: passkey.id },
+        sessionHash
+      );
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          passkey: {
+            id: passkey.id,
+            name: passkey.name
+          }
+        }),
+        {
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    } catch (err: any) {
+      await activityLog.record(
+        user.id,
+        "passkey_verify_fail",
+        clientIp,
+        userAgent,
+        { flow: "mfa_test", name: passkey.name, id: passkey.id, error: err.message || "failed" },
+        sessionHash
+      );
+      console.warn("[Passkey Test] Verification failed:", err.message || err);
+      return new Response(err.message || "Passkey verification failed", { status: 400 });
+    }
   }
 
   // POST /api/account/passkeys/register/options — 生成通行密钥注册挑战与参数
@@ -181,31 +280,30 @@ export async function handlePasskeysRequest(
       const dbUser = await userModel.getById(user.id);
       let recoveryKeys: string[] = [];
       if (dbUser) {
+        let hasExistingRecoveryKeys = false;
         if (dbUser.totp_recovery_keys) {
-          let parsedKeys: any = null;
           try {
-            parsedKeys = typeof dbUser.totp_recovery_keys === "string"
+            const parsed = typeof dbUser.totp_recovery_keys === "string"
               ? JSON.parse(dbUser.totp_recovery_keys)
               : dbUser.totp_recovery_keys;
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              hasExistingRecoveryKeys = true;
+            }
           } catch {
-            parsedKeys = [dbUser.totp_recovery_keys];
-          }
-          if (!Array.isArray(parsedKeys)) parsedKeys = [parsedKeys];
-          for (const item of parsedKeys) {
-            if (typeof item === "object" && item?.key) {
-              recoveryKeys.push(item.key);
-            } else if (typeof item === "string" && !/^[a-fA-F0-9]{64}$/.test(item.trim())) {
-              recoveryKeys.push(item);
+            if (dbUser.totp_recovery_keys.length > 0) {
+              hasExistingRecoveryKeys = true;
             }
           }
+        } else if (dbUser.totp_recovery_keys_encrypted) {
+          hasExistingRecoveryKeys = true;
         }
 
-        // If no recovery keys found or only legacy hashes exist, generate fresh recovery keys
-        if (recoveryKeys.length === 0) {
+        // Only generate emergency recovery keys if the account does not already have recovery keys configured.
+        // Existing recovery keys (hashed or envelope-encrypted) must never be overwritten on passkey addition.
+        if (!hasExistingRecoveryKeys) {
           const plaintextKeys = generateRecoveryKeys();
-          const storedItems: StoredRecoveryKeyItem[] = await Promise.all(
+          const storedItems: StoredRecoveryKey[] = await Promise.all(
             plaintextKeys.map(async (k) => ({
-              key: k,
               hash: await hashRecoveryKey(k)
             }))
           );
@@ -215,10 +313,16 @@ export async function handlePasskeysRequest(
       }
 
       await activityLog.record(user.id, "passkey_registered", clientIp, userAgent, { name: passkeyName }, sessionHash);
-      return new Response(JSON.stringify({ ...created, recovery_keys: recoveryKeys }), {
-        status: 201,
-        headers: { "Content-Type": "application/json" }
-      });
+      return new Response(
+        JSON.stringify({
+          ...created,
+          recovery_keys: recoveryKeys.length > 0 ? recoveryKeys : undefined
+        }),
+        {
+          status: 201,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
     } catch (err: any) {
       console.warn("[Passkey Registration] Verification failed:", err.message || err);
       return new Response(err.message || "Passkey registration failed", { status: 400 });

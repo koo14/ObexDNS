@@ -1,5 +1,6 @@
 import type { UserInfo, SessionInfo, ActivityEntry, Passkey } from "./types";
 import { ApiError } from "./auth";
+import { startPasskeyAuthentication } from "../utils/webauthn";
 
 export interface UpdatePasswordPayload {
   oldPassword?: string;
@@ -15,12 +16,7 @@ export interface VerifyIdentityPayload {
   totpTokenHash?: string;
   totpSalt?: string;
   passkeyAssertion?: any;
-}
-
-export interface ViewRecoveryKeysResponse {
-  has_keys: boolean;
-  is_legacy: boolean;
-  recovery_keys: string[];
+  recoveryKey?: string;
 }
 
 export interface RotateRecoveryKeyResponse {
@@ -103,6 +99,7 @@ export async function getActivityLog(params: string): Promise<ActivityEntry[]> {
   return res.json();
 }
 
+
 export async function clearLogs(): Promise<void> {
   const res = await fetch("/api/account/logs", { method: "DELETE" });
   if (!res.ok) throw new Error(await res.text());
@@ -144,11 +141,11 @@ export async function updateTotpSettings(skipPassword: boolean): Promise<void> {
 
 export const updateMfaSettings = updateTotpSettings;
 
-export async function migratePassword(clientHash: string): Promise<void> {
+export async function migratePassword(clientHash: string, oldPassword?: string): Promise<void> {
   const res = await fetch("/api/account/migrate-password", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ clientHash })
+    body: JSON.stringify({ clientHash, oldPassword })
   });
   if (!res.ok) throw new Error(await res.text());
 }
@@ -217,19 +214,49 @@ export async function deletePasskey(id: string): Promise<void> {
   if (!res.ok) throw new ApiError(res.status, await res.text());
 }
 
-export async function getPasskeyAuthOptions(): Promise<any> {
-  const res = await fetch("/api/account/passkeys/auth-options", {
-    method: "POST"
+export interface TestPasskeyResponse {
+  success: boolean;
+  passkey: {
+    id: string;
+    name: string;
+  };
+}
+
+export async function testPasskey(passkeyId?: string): Promise<TestPasskeyResponse> {
+  const options = await getPasskeyAuthOptions(passkeyId);
+  const assertion = await startPasskeyAuthentication(options);
+  const res = await fetch("/api/account/passkeys/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ credential: assertion })
   });
   if (!res.ok) throw new ApiError(res.status, await res.text());
   return res.json();
 }
 
-export async function viewRecoveryKeys(payload: VerifyIdentityPayload): Promise<ViewRecoveryKeysResponse> {
-  const res = await fetch("/api/account/recovery-keys/view", {
+export async function testTotp(code: string): Promise<{ success: boolean }> {
+  const rawToken = code.trim().replace(/\s/g, "");
+  const salt = crypto.randomUUID();
+  const msgBuffer = new TextEncoder().encode(rawToken + salt);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
+  const hashHex = Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  const res = await fetch("/api/account/totp/test", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ totpTokenHash: hashHex, salt })
+  });
+  if (!res.ok) throw new ApiError(res.status, await res.text());
+  return res.json();
+}
+
+export async function getPasskeyAuthOptions(passkeyId?: string): Promise<any> {
+  const res = await fetch("/api/account/passkeys/auth-options", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(passkeyId ? { passkeyId } : {})
   });
   if (!res.ok) throw new ApiError(res.status, await res.text());
   return res.json();

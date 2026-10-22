@@ -9,6 +9,9 @@ import { Env, Context, ExecutionContext } from '../types';
 import { parseDNSQueryFromRaw } from '../utils/dns';
 import { pipeline } from '../pipeline';
 import { resolveDefaultProfile, resolveProfileByKey } from '../api/doh';
+import { resolveUpstreamEndpoint, fetchFromUpstream } from '../pipeline/resolver/transport';
+import { DEFAULT_FAIL_OPEN_UPSTREAM } from '../constants/presets';
+import { formatPortError } from './format';
 
 export interface UdpServerOptions {
   port: number;
@@ -28,15 +31,40 @@ export class UdpDnsServer {
       try {
         this.socket = dgram.createSocket('udp4');
 
-        this.socket.on('error', (err: Error) => {
-          console.error('[UDP DNS] Socket error:', err);
-        });
+        const startupErrorHandler = (err: any) => {
+          try { this.socket?.close(); } catch {}
+          this.socket = null;
+
+          console.error(formatPortError({
+            serviceName: 'UDP DNS',
+            protocol: 'UDP',
+            port: this.options.port,
+            err,
+            alternateOption: '--dns-port <port> (e.g. --dns-port 5353)',
+            disableOption: '--disable-udp'
+          }));
+
+          reject(err);
+        };
+
+        this.socket.once('error', startupErrorHandler);
 
         this.socket.on('message', async (msg: Buffer, rinfo: dgram.RemoteInfo) => {
           await this.handleMessage(msg, rinfo);
         });
 
         this.socket.bind(this.options.port, this.options.host, () => {
+          this.socket?.removeListener('error', startupErrorHandler);
+          this.socket?.on('error', (err: Error) => {
+            console.error('[UDP DNS] Socket runtime error:', err);
+          });
+          // Boost OS UDP socket buffers to reduce packet drops under high DNS load
+          try {
+            this.socket?.setRecvBufferSize(4 * 1024 * 1024);
+            this.socket?.setSendBufferSize(4 * 1024 * 1024);
+          } catch {
+            /* Gracefully ignore if OS limits prevent buffer expansion */
+          }
           this.isRunning = true;
           console.log(`[UDP DNS] Classic DNS listening on udp://${this.options.host}:${this.options.port}`);
           resolve();
@@ -65,7 +93,7 @@ export class UdpDnsServer {
 
       // Determine profile:
       // 1. Configured default profile key
-      // 2. Database default / first profile fallback
+      // 2. Safe default profile fallback to FAIL_OPEN_UPSTREAM (log_retention_days: 0)
       let profile = null;
       if (this.options.defaultProfileKey) {
         profile = await resolveProfileByKey(this.options.defaultProfileKey, env, ctx);
@@ -86,7 +114,8 @@ export class UdpDnsServer {
         ctx
       };
 
-      const request = new Request(`http://${rinfo.address}/dns-query`, {
+      const host = rinfo.address.includes(':') ? `[${rinfo.address}]` : rinfo.address;
+      const request = new Request(`http://${host}/dns-query`, {
         headers: {
           'CF-Connecting-IP': rinfo.address,
           'Accept': 'application/dns-message',
@@ -116,6 +145,21 @@ export class UdpDnsServer {
       });
     } catch (err) {
       console.error('[UDP DNS] Message handling exception:', err);
+      try {
+        const failOpenUpstream = this.options.env.FAIL_OPEN_UPSTREAM || DEFAULT_FAIL_OPEN_UPSTREAM;
+        const rawBytes = new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
+        const endpoint = resolveUpstreamEndpoint(failOpenUpstream);
+        const transportRes = await fetchFromUpstream(endpoint, rawBytes);
+        let answer = transportRes.answer;
+        if (answer.length > 512) {
+          const truncated = new Uint8Array(answer);
+          truncated[2] |= 0x02;
+          answer = truncated.slice(0, 512);
+        }
+        this.socket?.send(answer, rinfo.port, rinfo.address);
+      } catch (fallbackErr) {
+        console.error('[UDP DNS] Fail-open upstream fallback failed:', fallbackErr);
+      }
     }
   }
 

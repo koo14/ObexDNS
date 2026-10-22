@@ -3,7 +3,8 @@ import { Section, SectionCard, Button, Spinner, Intent, PopoverNext } from "@blu
 import { Activity, ShieldCheck, Server, Globe, MapPin, Eye, EyeOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import clsx from "clsx";
-import type {  ClientInfo  } from "../types";
+import type { ClientInfo } from "../types";
+import { useDeploymentMode } from "../../../hooks/useDeploymentMode";
 
 export interface VerifyConnectionCardProps {
   isVerifying: boolean;
@@ -15,7 +16,8 @@ export interface VerifyConnectionCardProps {
   setShowIp: (show: boolean) => void;
   showLocation: boolean;
   setShowLocation: (show: boolean) => void;
-  traceInfo: { colo: string; raw: string } | null;
+  traceInfo?: { colo: string; raw: string } | null;
+  edgeLocation?: string | null;
 }
 
 export const VerifyConnectionCard: React.FC<VerifyConnectionCardProps> = ({
@@ -29,9 +31,35 @@ export const VerifyConnectionCard: React.FC<VerifyConnectionCardProps> = ({
   showLocation,
   setShowLocation,
   traceInfo,
+  edgeLocation,
 }) => {
   const { t } = useTranslation();
-  const [isTracePopoverOpen, setIsTracePopoverOpen] = useState(false);
+  const { isServerfull } = useDeploymentMode();
+  const [isTraceOpen, setIsTraceOpen] = useState(false);
+
+  const edgeServerCardNode = (
+    <div
+      className={clsx(
+        "bg-white dark:bg-gray-900 p-4 rounded-lg border border-gray-100 dark:border-gray-800 shadow-sm flex items-start gap-3 select-none h-full transition-all",
+        !isServerfull && "cursor-pointer hover:border-purple-300 dark:hover:border-purple-700 hover:shadow-md"
+      )}
+    >
+      <Server size={18} className="text-purple-500 mt-1 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <div className="text-[10px] uppercase font-bold opacity-40">
+          {isServerfull ? t("setup.serverLocation", "服务器位置") : t("setup.edgeServer")}
+        </div>
+        <div
+          className="font-bold truncate"
+          title={isServerfull ? (edgeLocation || "") : (edgeLocation || traceInfo?.colo || "")}
+        >
+          {isServerfull
+            ? (edgeLocation || t("setup.detecting"))
+            : (edgeLocation || traceInfo?.colo || t("setup.detecting"))}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <Section title={t("setup.verifyConnection")} icon={<Activity size={16} />}>
@@ -71,7 +99,7 @@ export const VerifyConnectionCard: React.FC<VerifyConnectionCardProps> = ({
           </div>
 
           {clientInfo && (
-            <div className={`grid grid-cols-1 gap-4 ${traceInfo ? "sm:grid-cols-2 md:grid-cols-3" : "md:grid-cols-2"}`}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
               <div className="bg-white dark:bg-gray-900 p-4 rounded-lg border border-gray-100 dark:border-gray-800 shadow-sm flex items-start gap-3">
                 <Globe size={18} className="text-blue-500 mt-1" />
                 <div className="flex-1 min-w-0">
@@ -99,36 +127,39 @@ export const VerifyConnectionCard: React.FC<VerifyConnectionCardProps> = ({
                   </div>
                   <div className="font-bold truncate">
                     <span className={clsx("transition-[filter] duration-200 inline-block", !showLocation && "filter blur-[6px] select-none")}>
-                      {clientInfo.city}, {clientInfo.region ? `${clientInfo.region}, ` : ""}{clientInfo.country}
+                      {(() => {
+                        const parts = [clientInfo.city, clientInfo.region, clientInfo.country].filter(
+                          (p): p is string => Boolean(p && p !== "UNKNOWN")
+                        );
+                        return parts.length > 0 ? parts.join(", ") : t("setup.detecting");
+                      })()}
                     </span>
                   </div>
                 </div>
               </div>
-              {traceInfo && (
+              {!isServerfull ? (
                 <PopoverNext
-                  isOpen={isTracePopoverOpen}
-                  onInteraction={(nextOpenState) => setIsTracePopoverOpen(nextOpenState)}
-                  placement="bottom"
+                  isOpen={isTraceOpen}
+                  onInteraction={setIsTraceOpen}
+                  placement="bottom-end"
+                  portalClassName="z-20000"
+                  fill={true}
+                  targetProps={{ className: "h-full" }}
                   content={
-                    <div className="p-4 max-w-sm max-h-60 overflow-auto font-mono text-xs bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-lg rounded-lg">
-                      <div className="font-bold border-b border-gray-100 dark:border-gray-800 pb-2 mb-2">/cdn-cgi/trace</div>
-                      <pre className="whitespace-pre-wrap">{traceInfo.raw}</pre>
+                    <div className="p-3 select-text w-72 sm:w-80 max-w-[85vw] space-y-2">
+                      <div className="text-[11px] font-mono font-bold text-gray-500 dark:text-gray-400 tracking-wide border-b border-gray-100 dark:border-gray-800 pb-1.5">
+                        /cdn-cgi/trace
+                      </div>
+                      <pre className="m-0 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all overflow-x-hidden max-h-64 overflow-y-auto text-gray-800 dark:text-gray-200">
+                        {traceInfo?.raw || t("setup.noTraceData", "暂无 Trace 数据")}
+                      </pre>
                     </div>
                   }
                 >
-                  <div 
-                    className="bg-white dark:bg-gray-900 p-4 rounded-lg border border-gray-100 dark:border-gray-800 shadow-sm flex items-start gap-3 cursor-pointer select-none"
-                    onDoubleClick={() => setIsTracePopoverOpen(true)}
-                  >
-                    <Server size={18} className="text-purple-500 mt-1" />
-                    <div className="min-w-0">
-                      <div className="text-[10px] uppercase font-bold opacity-40">{t("setup.edgeServer")}</div>
-                      <div className="font-bold truncate">
-                        {traceInfo.colo}
-                      </div>
-                    </div>
-                  </div>
+                  {edgeServerCardNode}
                 </PopoverNext>
+              ) : (
+                edgeServerCardNode
               )}
             </div>
           )}

@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { D1Database, D1PreparedStatement, D1Result, D1ExecResult, D1DatabaseSession } from '@cloudflare/workers-types';
+import { getPackageRoot } from './config';
 
 export class NodeD1PreparedStatement implements D1PreparedStatement {
   private params: any[] = [];
@@ -101,7 +102,23 @@ export class NodeD1PreparedStatement implements D1PreparedStatement {
 }
 
 export class NodeD1Database implements D1Database {
-  constructor(public readonly rawDb: DatabaseSync) {}
+  constructor(
+    public readonly rawDb: DatabaseSync,
+    public readonly dbPath?: string
+  ) {}
+
+
+  /**
+   * Performs an immediate SQLite VACUUM and truncates the WAL write-ahead log to reclaim disk space.
+   */
+  vacuum(): void {
+    try {
+      this.rawDb.exec('VACUUM;');
+      this.rawDb.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (err: unknown) {
+      console.warn('[SQLite D1] VACUUM / checkpoint warning:', err);
+    }
+  }
 
   prepare(query: string): D1PreparedStatement {
     return new NodeD1PreparedStatement(this.rawDb, query) as unknown as D1PreparedStatement;
@@ -130,6 +147,12 @@ export class NodeD1Database implements D1Database {
 
   async dump(): Promise<ArrayBuffer> {
     throw new Error('dump() is not supported in NodeD1Database');
+  }
+
+  close(): void {
+    try {
+      this.rawDb.close();
+    } catch {}
   }
 
   withSession(_constraintOrBookmark?: string): D1DatabaseSession {
@@ -197,23 +220,40 @@ export function runMigrations(db: DatabaseSync, migrationsDir: string): void {
 /**
  * Initializes SQLite database for Serverfull mode with WAL mode and runs pending migrations.
  */
-export function initServerfullDb(dbPath: string, rootDir: string = process.cwd()): NodeD1Database {
+export function initServerfullDb(dbPath: string, rootDir: string = getPackageRoot()): NodeD1Database {
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
+  // Seamlessly migrate legacy database from ./data/dns_worker.sqlite if target database does not exist yet
+  if (!fs.existsSync(dbPath)) {
+    const legacyPath = path.join(process.cwd(), 'data', 'dns_worker.sqlite');
+    if (fs.existsSync(legacyPath) && path.resolve(legacyPath) !== path.resolve(dbPath)) {
+      try {
+        fs.copyFileSync(legacyPath, dbPath);
+        console.log(`[SQLite D1] Seamlessly migrated existing database from ${legacyPath} to ${dbPath}`);
+      } catch {
+        /* If copy fails, fresh database will be initialized */
+      }
+    }
+  }
+
   console.log(`[SQLite D1] Connecting to database at: ${dbPath}`);
   const rawDb = new DatabaseSync(dbPath);
 
-  // Configure SQLite for high concurrency & integrity
+  // Configure SQLite for high concurrency, zero-copy memory reads & integrity
   rawDb.exec('PRAGMA journal_mode = WAL;');
   rawDb.exec('PRAGMA synchronous = NORMAL;');
+  rawDb.exec('PRAGMA busy_timeout = 5000;');
   rawDb.exec('PRAGMA foreign_keys = ON;');
+  rawDb.exec('PRAGMA temp_store = MEMORY;');
+  rawDb.exec('PRAGMA cache_size = -64000;'); // 64 MB in-memory page cache
+  rawDb.exec('PRAGMA mmap_size = 268435456;'); // 256 MB zero-copy memory-mapped I/O
 
   // Run migrations
   const migrationsDir = path.join(rootDir, 'migrations');
   runMigrations(rawDb, migrationsDir);
 
-  return new NodeD1Database(rawDb);
+  return new NodeD1Database(rawDb, dbPath);
 }

@@ -1,5 +1,6 @@
 import { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { SystemSettingsModel } from "../systemSettings";
+import { KemKeyModel } from "../kemKey";
 
 /**
  * Model responsible for enforcing log retention policies and purging
@@ -27,8 +28,6 @@ export class LogRetentionModel {
    *   3. Daily quota budget: tracks deleted rows today via SystemSettingsModel,
    *      capping total deletions at dailyBudget per UTC day to prevent exhausting
    *      Cloudflare D1 daily write quota (100k writes/day).
-   *
-   * Also purges expired entries from domain, log, client, and destination rollups.
    *
    * @param maxRetentionDays - Hard cap on log retention days (default 30).
    * @param batchLimit - Maximum total log rows deleted across all profiles in this run (default 1000).
@@ -77,7 +76,6 @@ export class LogRetentionModel {
       const effectiveBatchLimit = dailyBudget > 0 ? Math.min(batchLimit, remainingBudget) : batchLimit;
       const perProfileLimit = Math.max(1, Math.floor(effectiveBatchLimit / profiles.length));
 
-      const rollupStatements: D1PreparedStatement[] = [];
       const logDeleteStatements: D1PreparedStatement[] = [];
 
       for (const profile of profiles) {
@@ -96,28 +94,6 @@ export class LogRetentionModel {
         const effectiveDays = Math.min(days, maxRetentionDays);
         const threshold = Math.floor(Date.now() / 1000 - effectiveDays * 24 * 3600);
 
-        // Purge expired rollups matching retention policy
-        rollupStatements.push(
-          this.db.prepare(
-            "DELETE FROM domain_hourly_rollups WHERE profile_id = ? AND action IN ('PASS', 'BLOCK', 'REDIRECT', 'FAIL') AND hour_timestamp < ?"
-          ).bind(profile.id, threshold)
-        );
-        rollupStatements.push(
-          this.db.prepare(
-            "DELETE FROM log_hourly_rollups WHERE profile_id = ? AND hour_timestamp < ?"
-          ).bind(profile.id, threshold)
-        );
-        rollupStatements.push(
-          this.db.prepare(
-            "DELETE FROM client_hourly_rollups WHERE profile_id = ? AND hour_timestamp < ?"
-          ).bind(profile.id, threshold)
-        );
-        rollupStatements.push(
-          this.db.prepare(
-            "DELETE FROM destination_hourly_rollups WHERE profile_id = ? AND hour_timestamp < ?"
-          ).bind(profile.id, threshold)
-        );
-
         // Delete bounded number of rows per profile per hourly cron run if budget remains
         if (canDeleteLogs && effectiveBatchLimit > 0) {
           logDeleteStatements.push(
@@ -130,16 +106,8 @@ export class LogRetentionModel {
         }
       }
 
-      // Execute rollup deletions in chunks
-      const CHUNK_SIZE = 50;
-      if (rollupStatements.length > 0) {
-        for (let i = 0; i < rollupStatements.length; i += CHUNK_SIZE) {
-          const chunk = rollupStatements.slice(i, i + CHUNK_SIZE);
-          await this.db.batch(chunk);
-        }
-      }
-
       // Execute log deletions in chunks and track affected rows
+      const CHUNK_SIZE = 50;
       let newlyDeletedLogs = 0;
       if (logDeleteStatements.length > 0) {
         for (let i = 0; i < logDeleteStatements.length; i += CHUNK_SIZE) {
@@ -167,6 +135,39 @@ export class LogRetentionModel {
           } catch (err) {
             console.warn("[LogRetentionModel] Failed to persist daily cleanup count:", err);
           }
+        }
+      }
+
+      // ── Orphan kem_keys cleanup (Zero Dependents) ───────────────────────────
+      // Automatically purges kem_keys that have zero referencing logs in D1,
+      // strictly ensuring keys with active dependent logs are preserved regardless of age.
+      // Performance optimization: only run orphan key cleanup if logs were actually purged
+      // in this run (newlyDeletedLogs > 0), OR once a day during the first UTC run.
+      // This eliminates redundant subqueries during normal hours when zero logs were deleted.
+      let isDailyOrphanCheckDue = false;
+      try {
+        const lastOrphanCleanupDate = await this.settingsModel.get("kem_orphan_cleanup_date");
+        if (lastOrphanCleanupDate !== todayDate) {
+          isDailyOrphanCheckDue = true;
+        }
+      } catch {
+        // Fallback to checking newlyDeletedLogs only
+      }
+
+      if (newlyDeletedLogs > 0 || isDailyOrphanCheckDue) {
+        try {
+          const kemKeyModel = new KemKeyModel(this.db);
+          const deletedOrphanKeys = await kemKeyModel.cleanupOrphans(86400, 100);
+          if (isDailyOrphanCheckDue) {
+            await this.settingsModel.set("kem_orphan_cleanup_date", todayDate).catch(() => {});
+          }
+          if (deletedOrphanKeys > 0) {
+            console.log(
+              `[LogRetentionModel] Cleaned up ${deletedOrphanKeys} orphaned kem_keys with zero referencing logs.`
+            );
+          }
+        } catch (kemErr) {
+          console.warn("[LogRetentionModel] Failed to cleanup orphaned kem_keys:", kemErr);
         }
       }
 

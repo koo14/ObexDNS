@@ -3,14 +3,15 @@ import { useTranslation } from "react-i18next";
 import type { OverlayToaster } from "@blueprintjs/core";
 import { getAccessToken, setAccessToken } from "../utils/token";
 import { setSystemTimeZone, setSystemLocale } from "../utils/date";
-import { refresh, getMe, logout, ApiError } from "../services";
+import { refresh, getMe, logout, ApiError, e2ee } from "../services";
 import type { UserInfo } from "../services";
 
 /**
  * Helper to clear the CSRF cookie and session storage flags.
  */
 const clearCsrfToken = () => {
-  document.cookie = "csrf_token=; Max-Age=0; path=/; Secure; SameSite=Lax";
+  const secureFlag = typeof window !== "undefined" && window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `csrf_token=; Max-Age=0; path=/; SameSite=Lax${secureFlag}`;
   try {
     sessionStorage.removeItem("obex_session_active");
     sessionStorage.removeItem("obex_session_locked");
@@ -31,15 +32,17 @@ export function useAuth(toasterRef: React.RefObject<OverlayToaster | null>) {
 
   const checkAuth = async () => {
     try {
-      // Check if we have a csrf_token cookie.
+      const token = getAccessToken();
       const hasCsrfToken = document.cookie.includes("csrf_token=");
-      if (!hasCsrfToken) {
+
+      // Only bail out if we neither have an in-memory token nor a csrf token cookie.
+      if (!token && !hasCsrfToken) {
         setIsLoggedIn(false);
         return;
       }
 
       // If we don't have an access token in memory, try to refresh first.
-      if (!getAccessToken()) {
+      if (!token) {
         try {
           const data = await refresh();
           setAccessToken(data.accessToken);
@@ -109,6 +112,7 @@ export function useAuth(toasterRef: React.RefObject<OverlayToaster | null>) {
   // Listen for unauthorized events from the API client / interceptor
   useEffect(() => {
     const handleUnauthorized = (e: Event) => {
+      e2ee.clearStorage();
       clearCsrfToken();
       setIsLoggedIn(false);
 
@@ -148,10 +152,12 @@ export function useAuth(toasterRef: React.RefObject<OverlayToaster | null>) {
 
   const handleLogout = async () => {
     try {
+      e2ee.clearStorage();
       await logout();
     } catch (e) {
       console.error("Logout failed", e);
     } finally {
+      e2ee.clearStorage();
       if (typeof window !== "undefined" && "caches" in window) {
         try {
           await caches.delete("dns-worker-logs-v1");

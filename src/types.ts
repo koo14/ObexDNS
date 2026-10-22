@@ -12,6 +12,7 @@ export interface Env {
   SESSION_GEO_DISTANCE_KM?: string | number;
   PREAUTH_TTL_SECONDS?: string | number;
   BLOOM_MEM_TTL?: string | number;
+  CONFIG_MEM_TTL?: string | number;
   SYNC_TIMEOUT_MS?: string | number;
   INACTIVITY_THRESHOLD_DAYS?: string | number;
   PRESET_UPSTREAMS?: string;
@@ -37,6 +38,14 @@ export interface Env {
   LOG_CLEANUP_BATCH_LIMIT?: string | number;
   LOG_CLEANUP_DAILY_BUDGET?: string | number;
   DOMAIN_ROLLUP_MIN_COUNT?: string | number;
+  SERVERFULL_DOT_DOMAIN?: string;
+  SERVERFULL_DB_PATH?: string;
+  DOT_DOMAIN?: string;
+  TRUSTED_PROXIES?: string;
+  TURSO_DATABASE_URL?: string;
+  TURSO_URL?: string;
+  TURSO_AUTH_TOKEN?: string;
+  DATABASE_SERVICE?: 'D1' | 'Turso' | 'File' | string;
   [key: string]: any;
 }
 
@@ -166,6 +175,18 @@ export interface ResolutionLog {
   latency?: number;
   ecs?: string;
   upstream?: string;
+  encrypt_version?: number; // 0: unencrypted, 1: pure P-256 legacy, 2: P256-MLKEM768 hourly KEM
+  kem_key_id?: string | null;
+  kem_ct?: string | null;
+  encrypted_payload?: string | null;
+}
+
+export interface KemKeyRecord {
+  id: string;
+  profile_id: string;
+  kem_ct: string;
+  created_at: number;
+  expires_at: number;
 }
 
 export interface LogHourlyRollup {

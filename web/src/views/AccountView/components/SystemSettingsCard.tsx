@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Card, Elevation, H4, FormGroup, InputGroup, Switch, Divider, Button, Intent } from "@blueprintjs/core";
 import { Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -10,13 +10,16 @@ export interface SystemSettingsCardProps {
   onRefresh: () => void;
 }
 
-export const SystemSettingsCard: React.FC<SystemSettingsCardProps> = ({ initialSettings, onRefresh }) => {
+export const SystemSettingsCard: React.FC<SystemSettingsCardProps> = ({
+  initialSettings,
+  onRefresh
+}) => {
   const { t } = useTranslation();
   const [sysSettings, setSysSettings] = useState<Record<string, string>>(initialSettings);
   const [sysLoading, setSysLoading] = useState(false);
   const [showTurnstileSecretKey, setShowTurnstileSecretKey] = useState(false);
 
-  React.useEffect(() => {
+  useEffect(() => {
     setSysSettings(initialSettings);
   }, [initialSettings]);
 

@@ -2,6 +2,7 @@ import React from "react";
 import { HTMLTable, Tag } from "@blueprintjs/core";
 import { clsx } from "clsx";
 import { useTranslation } from "react-i18next";
+import { Lock } from "lucide-react";
 import type {  LogEntry  } from "../types";
 import { getFlagEmoji } from "../../../utils/getFlagEmoji";
 
@@ -45,17 +46,38 @@ export const LogsTable: React.FC<LogsTableProps> = ({
       key: "domain",
       header: t("logs.tableDomain"),
       headerClassName: "w-1/4",
-      render: (log: LogEntry): React.ReactNode => (
-        <div className="flex items-center gap-2 truncate">
-          <img
-            src={`/api/icon/${log.domain.replace(/^\*\./, "")}.ico`}
-            className="w-4 h-4 rounded-sm"
-            alt=""
-            referrerPolicy="no-referrer"
-          />
-          <span className="font-bold text-sm truncate">{log.domain}</span>
-        </div>
-      ),
+      render: (log: LogEntry): React.ReactNode => {
+        const isEncrypted = (log.encrypt_version ?? 0) > 0 || Boolean(log.kem_key_id || log.encrypted_payload);
+        const isEncryptedLocked = isEncrypted && (!log.domain || log.domain === "[Encrypted]");
+        const isEncryptedUnlocked = isEncrypted && Boolean(log.domain && log.domain !== "[Encrypted]");
+
+        return (
+          <div className="flex items-center gap-2 truncate">
+            {isEncryptedLocked ? (
+              <Lock size={14} className="text-amber-500 shrink-0" />
+            ) : (
+              <img
+                src={`/api/icon/${log.domain.replace(/^\*\./, "")}.ico`}
+                className="w-4 h-4 rounded-sm shrink-0"
+                alt=""
+                referrerPolicy="no-referrer"
+              />
+            )}
+            <span
+              className={clsx("font-bold text-sm truncate", {
+                "italic text-gray-400 dark:text-gray-500": isEncryptedLocked,
+              })}
+            >
+              {isEncryptedLocked ? t("logs.encryptedRecord", "[加密记录]") : log.domain}
+            </span>
+            {isEncryptedUnlocked && (
+              <span title={t("settings.e2eeEnabled", "已加密")} className="inline-flex items-center">
+                <Lock size={12} className="text-emerald-500 shrink-0 opacity-80" />
+              </span>
+            )}
+          </div>
+        );
+      },
     },
     {
       key: "answer",
@@ -70,8 +92,8 @@ export const LogsTable: React.FC<LogsTableProps> = ({
       headerClassName: "w-32",
       render: (log: LogEntry): React.ReactNode => (
         <div className="flex items-center gap-2">
-          <Tag minimal className="font-mono text-[10px]">
-            {getFlagEmoji(log.geo_country || "UN")}
+          <Tag minimal className="font-mono text-[10px]" title={log.geo_country || "Unknown"}>
+            {getFlagEmoji(log.geo_country)}
           </Tag>
           {log.access_point_name && (
             <span className="text-xs opacity-70 truncate max-w-20" title={log.access_point_name}>

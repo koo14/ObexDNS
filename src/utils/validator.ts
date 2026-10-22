@@ -69,11 +69,43 @@ export const ACCESS_KEY_REGEX = /^[a-zA-Z0-9]{5,12}$/;
  */
 export const TOTP_TOKEN_REGEX = /^\d{6}$/;
 
-const FORBIDDEN_HOSTNAMES = [
+const FORBIDDEN_HOSTNAMES: readonly string[] = [
   'localhost',
   'metadata.google.internal', // GCP
+  'metadata.goog',
   '169.254.169.254',          // AWS/GCP/Azure IMDS
+  'instance-data',
+  'localtest.me',
 ];
+
+const FORBIDDEN_HOSTNAME_SUFFIXES: readonly string[] = [
+  '.localhost',
+  '.local',
+  '.internal',
+  '.lan',
+  '.home.arpa',
+  '.corp',
+  '.home',
+  '.localtest.me',
+];
+
+/**
+ * Extracts embedded IPv4 addresses from wildcard/dynamic DNS services (e.g. nip.io, sslip.io).
+ *
+ * @param hostname - Normalized lowercase hostname.
+ * @returns Extracted IPv4 string or null if not an embedded IP service.
+ */
+function extractEmbeddedDnsIp(hostname: string): string | null {
+  // Dot-separated IPv4: e.g. 127.0.0.1.nip.io, foo.192.168.1.1.sslip.io
+  const dotMatch = hostname.match(/(?:^|\.)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\.(?:nip\.io|sslip\.io)$/i);
+  if (dotMatch) return dotMatch[1];
+
+  // Dash-separated IPv4: e.g. 127-0-0-1.sslip.io, 10-0-0-1.nip.io
+  const dashMatch = hostname.match(/(?:^|\.)(\d{1,3})-(\d{1,3})-(\d{1,3})-(\d{1,3})\.(?:nip\.io|sslip\.io)$/i);
+  if (dashMatch) return `${dashMatch[1]}.${dashMatch[2]}.${dashMatch[3]}.${dashMatch[4]}`;
+
+  return null;
+}
 
 /**
  * Hardcoded standard private, loopback, link-local, multicast, and reserved CIDR ranges
@@ -167,10 +199,10 @@ export function isSafeUrl(urlString: string): boolean {
     }
 
     let parseableUrl: string;
-    if (urlString.startsWith('tcp://')) {
-      parseableUrl = urlString.replace('tcp://', 'http://');
-    } else if (urlString.startsWith('tls://')) {
-      parseableUrl = urlString.replace('tls://', 'http://');
+    if (urlString.startsWith('tcp://') || urlString.startsWith('udp://')) {
+      parseableUrl = urlString.replace(/^(tcp|udp):\/\//, 'http://');
+    } else if (urlString.startsWith('tls://') || urlString.startsWith('dot://')) {
+      parseableUrl = urlString.replace(/^(tls|dot):\/\//, 'http://');
     } else if (urlString.startsWith('http://') || urlString.startsWith('https://')) {
       parseableUrl = urlString;
     } else {
@@ -182,6 +214,26 @@ export function isSafeUrl(urlString: string): boolean {
 
     if (FORBIDDEN_HOSTNAMES.includes(rawHostname) || FORBIDDEN_HOSTNAMES.includes(url.hostname.toLowerCase())) {
       return false;
+    }
+
+    // Check forbidden internal / mDNS / local suffixes
+    for (const suffix of FORBIDDEN_HOSTNAME_SUFFIXES) {
+      if (rawHostname.endsWith(suffix) || rawHostname === suffix.slice(1)) {
+        return false;
+      }
+    }
+
+    // Check cloud metadata endpoints
+    if (rawHostname.includes('metadata.google')) {
+      return false;
+    }
+
+    // Check wildcard dynamic DNS embedded IPs (nip.io, sslip.io)
+    const embeddedIp = extractEmbeddedDnsIp(rawHostname);
+    if (embeddedIp) {
+      if (!isPublicInternetIP(embeddedIp)) {
+        return false;
+      }
     }
 
     // Check if hostname is an IP and matches forbidden ranges
@@ -198,4 +250,68 @@ export function isSafeUrl(urlString: string): boolean {
   } catch (e) {
     return false; // Invalid URL
   }
+}
+
+/**
+ * Asynchronously checks whether a URL is safe to fetch, including DNS pre-resolution
+ * in Node.js / Bun environments to guard against DNS rebinding / TOCTOU SSRF (CWE-918 / SEC-02).
+ *
+ * In Cloudflare Workers, outbound loopback/private RFC 1918 traffic is already blocked by the edge runtime.
+ * In Serverfull mode (Node.js/Bun), any domain name is pre-resolved and all resulting IP addresses
+ * are checked against isPublicInternetIP.
+ *
+ * @param urlString - The URL string to validate.
+ * @returns Promise resolving to true if safe, false if forbidden or resolves to private IP.
+ */
+export async function isSafeUrlWithDnsCheck(urlString: string): Promise<boolean> {
+  if (!isSafeUrl(urlString)) {
+    return false;
+  }
+
+  // In Node.js / Serverfull runtime, resolve domain and verify resulting IPs
+  if (typeof process !== 'undefined' && !!process.versions?.node) {
+    try {
+      let targetUrl = urlString;
+      if (urlString.startsWith('sdns://')) {
+        const stamp = parseDnsStamp(urlString);
+        targetUrl = stamp.resolvedUrl;
+      }
+
+      let parseableUrl: string;
+      if (targetUrl.startsWith('tcp://') || targetUrl.startsWith('udp://')) {
+        parseableUrl = targetUrl.replace(/^(tcp|udp):\/\//, 'http://');
+      } else if (targetUrl.startsWith('tls://') || targetUrl.startsWith('dot://')) {
+        parseableUrl = targetUrl.replace(/^(tls|dot):\/\//, 'http://');
+      } else if (targetUrl.startsWith('http://') || targetUrl.startsWith('https://')) {
+        parseableUrl = targetUrl;
+      } else {
+        parseableUrl = `http://${targetUrl}`;
+      }
+
+      const url = new URL(parseableUrl);
+      const rawHostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+
+      // If already an IP address, isSafeUrl already ensured it is a public IP
+      if (isIPv4(rawHostname) || isIPv6(rawHostname)) {
+        return true;
+      }
+
+      const dnsPromises = await import('node:dns/promises');
+      const addresses = await dnsPromises.lookup(rawHostname, { all: true });
+      if (!addresses || addresses.length === 0) {
+        return false;
+      }
+
+      for (const addr of addresses) {
+        if (!isPublicInternetIP(addr.address)) {
+          return false;
+        }
+      }
+    } catch {
+      // Resolution error or invalid hostname
+      return false;
+    }
+  }
+
+  return true;
 }

@@ -78,6 +78,22 @@ export async function handleMeRequest(
     if (request.method === 'PATCH') {
       const body = await request.json() as any;
       try {
+        if (user.isPaused) {
+          if (body.locale !== undefined) {
+            const newLocale = body.locale;
+            if (newLocale !== null && typeof newLocale === 'string' && newLocale !== '') {
+              try {
+                Intl.DateTimeFormat(newLocale);
+              } catch (e) {
+                return new Response("Invalid locale format", { status: 400 });
+              }
+            }
+            await userModel.updateLocale(user.id, newLocale || "en-US");
+            return new Response(JSON.stringify({ success: true }));
+          }
+          return new Response("session_paused", { status: 403 });
+        }
+
         if (body.session_lock_timeout !== undefined) {
           const timeout = Number(body.session_lock_timeout);
           await userModel.updateSessionLockTimeout(user.id, timeout);
@@ -125,9 +141,14 @@ export async function handleMeRequest(
     return new Response("Method Not Allowed", { status: 405 });
   }
 
+
   // DELETE /api/account/logs
   if (action === 'logs' && request.method === 'DELETE') {
     await logModel.deleteByOwner(user.id);
+    const dbAny = env.DB as unknown as { vacuum?: () => void };
+    if (typeof dbAny?.vacuum === 'function') {
+      dbAny.vacuum();
+    }
     return new Response(JSON.stringify({ success: true }));
   }
 

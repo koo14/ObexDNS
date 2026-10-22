@@ -4,6 +4,7 @@ import { LogModel } from "../../models/log";
 import { generateId } from "../../lib/auth";
 import { isSafeUrl } from "../../utils/validator";
 import { buildDNSQuery, parseDNSAnswer } from "../../utils/dns";
+import { resolveClientGeoCountry } from "../../utils/geoip";
 import { pipeline } from "../../pipeline";
 import { PROFILE_NAME_REGEX } from "../../utils/validator";
 
@@ -63,6 +64,41 @@ export async function handleProfilesCoreCollectionRequest(
       best_effort_ech: { enabled: false, fronting_domain: "cloudflare-ech.com" }
     };
     await profileModel.create({ id: newId, owner_id: user.id, name: body.name || "Unnamed Profile", settings: defaultSettings });
+
+    // Automatically inherit active account-level E2EE keys if configured
+    try {
+      const existingLogKey = await env.DB.prepare(
+        "SELECT public_key, is_active FROM user_log_keys WHERE profile_id IN (SELECT id FROM profiles WHERE owner_id = ?) LIMIT 1"
+      )
+        .bind(user.id)
+        .first<{ public_key: string; is_active?: number }>();
+
+      if (existingLogKey?.public_key) {
+        const now = Math.floor(Date.now() / 1000);
+        await env.DB.prepare(
+          "INSERT INTO user_log_keys (profile_id, public_key, created_at, is_active) VALUES (?, ?, ?, ?)"
+        )
+          .bind(newId, existingLogKey.public_key, now, existingLogKey.is_active ?? 1)
+          .run();
+
+        const existingRecKey = await env.DB.prepare(
+          "SELECT encrypted_sk, iv, salt FROM user_recovery_wrapped_keys WHERE profile_id IN (SELECT id FROM profiles WHERE owner_id = ?) LIMIT 1"
+        )
+          .bind(user.id)
+          .first<{ encrypted_sk: string; iv: string; salt: string }>();
+
+        if (existingRecKey) {
+          await env.DB.prepare(
+            "INSERT INTO user_recovery_wrapped_keys (profile_id, encrypted_sk, iv, salt, created_at) VALUES (?, ?, ?, ?, ?)"
+          )
+            .bind(newId, existingRecKey.encrypted_sk, existingRecKey.iv, existingRecKey.salt, now)
+            .run();
+        }
+      }
+    } catch (e) {
+      console.error("[Profiles] Failed to inherit E2EE log key for new profile:", e);
+    }
+
     return new Response(JSON.stringify({ id: newId }), { status: 201 });
   }
 
@@ -147,11 +183,13 @@ export async function handleProfilesCoreRequest(
         const isHttp  = url.startsWith('http://');
         const isTcp   = url.startsWith('tcp://');
         const isTls   = url.startsWith('tls://');
+        const isDot   = url.startsWith('dot://');
+        const isUdp   = url.startsWith('udp://');
         const isSdns  = url.startsWith('sdns://');
         // 裸 host[:port]：不含 / 且不含 scheme
         const isBareHost = !url.includes('//') && !url.startsWith('/');
 
-        if (!isHttps && !isHttp && !isTcp && !isTls && !isSdns && !isBareHost) {
+        if (!isHttps && !isHttp && !isTcp && !isTls && !isDot && !isUdp && !isSdns && !isBareHost) {
           return new Response("Invalid upstream URL format. Only HTTP(S), TCP, TLS (DoT), DNS Stamp (sdns://), or bare host[:port] are allowed.", { status: 400 });
         }
         // 统一规范化后做安全检查（防 SSRF）
@@ -178,16 +216,11 @@ export async function handleProfilesCoreRequest(
     const newDays = newSettings.log_retention_days;
     if (newDays != null && Number(newDays) < oldDays) {
       if (Number(newDays) === 0) {
-        // 关闭日志时彻底清空当前配置的历史日志与聚合记录
+        // 关闭日志时彻底清空当前配置的历史日志
         ctx.waitUntil((async () => {
           try {
-            await env.DB.batch([
-              env.DB.prepare("DELETE FROM domain_hourly_rollups WHERE profile_id = ?").bind(profileId),
-              env.DB.prepare("DELETE FROM log_hourly_rollups WHERE profile_id = ?").bind(profileId),
-              env.DB.prepare("DELETE FROM client_hourly_rollups WHERE profile_id = ?").bind(profileId),
-              env.DB.prepare("DELETE FROM destination_hourly_rollups WHERE profile_id = ?").bind(profileId),
-              env.DB.prepare("DELETE FROM logs WHERE profile_id = ?").bind(profileId),
-            ]);
+            await env.DB.prepare("DELETE FROM logs WHERE profile_id = ?").bind(profileId).run();
+            await logModel.kemKeys.cleanupProfileOrphans(profileId);
           } catch (e: any) {
             console.error("[Profile] Failed to purge logs on retention disable:", e?.message || e);
           }
@@ -216,7 +249,7 @@ export async function handleProfilesCoreRequest(
       latency: result.latency,
       timings: result.timings,
       client_ip: request.headers.get("CF-Connecting-IP") || "127.0.0.1",
-      geo_country: (request as any).cf?.country || request.headers.get("CF-IPCountry") || "UNKNOWN",
+      geo_country: await resolveClientGeoCountry(request, request.headers.get("CF-Connecting-IP") || "127.0.0.1"),
       success: true 
     }), { headers: { 'Content-Type': 'application/json' } });
   }

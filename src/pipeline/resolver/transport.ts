@@ -123,14 +123,28 @@ export function resolveUpstreamEndpoint(rawUpstreamUrl: string): UpstreamEndpoin
       );
     }
     if (stamp.protocol === "doq") {
-      throw new Error(
-        "DNS over QUIC (0x04) in DNS Stamp is not supported; please use DoH (0x02) or DoT (0x03) DNS Stamps"
-      );
+      effectiveUrl = stamp.resolvedUrl || `quic://${stamp.hostname || stamp.serverAddress}:853`;
     }
-    if (!stamp.resolvedUrl) {
+    if (!stamp.resolvedUrl && stamp.protocol !== "doq") {
       throw new Error(`Unsupported DNS Stamp protocol: 0x${stamp.protocolId.toString(16)}`);
     }
-    effectiveUrl = stamp.resolvedUrl;
+    if (stamp.protocol !== "doq") {
+      effectiveUrl = stamp.resolvedUrl!;
+    }
+  }
+
+  if (effectiveUrl.startsWith("dot://")) {
+    effectiveUrl = effectiveUrl.replace(/^dot:\/\//, "tls://");
+  }
+
+  if (effectiveUrl.startsWith("quic://") || effectiveUrl.startsWith("doq://")) {
+    const rawHost = effectiveUrl.replace(/^(quic|doq):\/\//, "");
+    const { host, port } = parseHostAndPort(rawHost, 853);
+    return {
+      effectiveUrl: `tls://${host}:${port}`,
+      diagMethod: "DoQ",
+      diagTarget: `quic://${host}:${port}`
+    };
   }
 
   if (effectiveUrl.startsWith("tls://")) {
@@ -144,7 +158,7 @@ export function resolveUpstreamEndpoint(rawUpstreamUrl: string): UpstreamEndpoin
   }
 
   if (!effectiveUrl.startsWith("http://") && !effectiveUrl.startsWith("https://")) {
-    const rawHost = effectiveUrl.replace(/^tcp:\/\//, "");
+    const rawHost = effectiveUrl.replace(/^(tcp|udp):\/\//, "");
     const { host, port } = parseHostAndPort(rawHost, 53);
     return {
       effectiveUrl,
@@ -175,9 +189,9 @@ export async function fetchFromUpstream(
   const startFetch = Date.now();
   let answer: Uint8Array;
 
-  if (effectiveUrl.startsWith("tls://")) {
+  if (effectiveUrl.startsWith("tls://") || effectiveUrl.startsWith("dot://")) {
     // ── DNS over TLS (DoT - RFC 7858) ──────────────────────────────────
-    const rawHost = effectiveUrl.replace(/^tls:\/\//, "");
+    const rawHost = effectiveUrl.replace(/^(tls|dot):\/\//, "");
     const { host: dotHost, port: dotPort } = parseHostAndPort(rawHost, 853);
 
     const socket = await connectUniversal({
@@ -208,7 +222,7 @@ export async function fetchFromUpstream(
     !effectiveUrl.startsWith("https://")
   ) {
     // ── Classic DNS (TCP Socket) ──────────────────────────────────────────
-    const rawHost = effectiveUrl.replace(/^tcp:\/\//, "");
+    const rawHost = effectiveUrl.replace(/^(tcp|udp):\/\//, "");
     const { host: tcpHost, port: tcpPort } = parseHostAndPort(rawHost, 53);
 
     const socket = await connectUniversal({

@@ -22,10 +22,12 @@ command = "npm run build"
 directory = "./static"
 # Binding name used to access static assets from the Worker.
 binding = "ASSETS"
-# Route HTML entry points through Worker first to ensure security headers and window.DNS_WORKER_CONFIG are injected
-run_worker_first = ["/", "/index.html"]
+# Force the Worker to run first for all incoming requests (API, DoH, SPA rewriting)
+run_worker_first = true
 
-# D1 Database for Profiles, Rules and Logs
+# D1 Database for Profiles, Rules and Logs (Default database backend for Serverless mode)
+# Note: If DATABASE_SERVICE is set to "Turso", the Worker will connect to Turso (libSQL over HTTP) instead of D1.
+# 注意：若在 [vars] 中设置 DATABASE_SERVICE = "Turso"，Worker 将使用 Turso 远程数据库替代 D1。
 [[d1_databases]]
 binding = "DB"
 database_name = "dns_worker_db"
@@ -61,6 +63,20 @@ head_sampling_rate = 0.001
 
 [vars]
 # Runtime configuration values exposed to the Worker.
+
+# Database backend service engine selection ("D1" or "Turso").
+# Serverless (Cloudflare Workers) mode defaults to "D1". Set to "Turso" to switch database engine to Turso.
+# 数据库引擎选择（"D1" 或 "Turso"）。Serverless 模式下默认使用 "D1"；配置为 "Turso" 时自动切换使用远程 Turso 数据库。
+DATABASE_SERVICE = "D1"
+
+# Turso (libSQL over HTTP) Database Configuration / Turso 远程数据库配置
+# When DATABASE_SERVICE is set to "Turso", configure your Turso database URL and auth token.
+# 当 DATABASE_SERVICE 配置为 "Turso" 时有效。支持 libsql:// 及 https:// 协议 (例如 "libsql://your-db-org.turso.io")。
+# TURSO_DATABASE_URL = "libsql://your-database-name.turso.io"
+# Recommended: store TURSO_AUTH_TOKEN in Worker Secrets (`npx wrangler secret put TURSO_AUTH_TOKEN`) to avoid committing secrets to git.
+# 推荐使用 Worker Secrets 存储敏感鉴权令牌 (`npx wrangler secret put TURSO_AUTH_TOKEN`)，避免将密钥提交到代码仓库。
+# TURSO_AUTH_TOKEN = ""
+
 # Recommended: configure JWT_SECRET via Worker Secrets / Environment Variables
 # (e.g. `npx wrangler secret put JWT_SECRET` or via dashboard) to keep secrets out of git.
 # JWT_SECRET = ""
@@ -70,34 +86,15 @@ head_sampling_rate = 0.001
 # Requires an API token with "Zone -> Cache Purge -> Purge" permission.
 # CF_ZONE_ID = ""
 # CF_PURGE_TOKEN = ""
-# Default upstream for fail-open emergency fallback
+# Default upstream for fail-open emergency fallback.
+# Supports HTTPS (DoH, e.g. "https://security.cloudflare-dns.com/dns-query"), TLS/DoT (e.g. "tls://1.1.1.1" or "tls://dns.google:853"), TCP (e.g. "tcp://1.1.1.1:53"), and DNS Stamps ("sdns://...").
 FAIL_OPEN_UPSTREAM = "https://freedns.controld.com/no-ads-malware-typo"
 # Maximum number of access points allowed per profile
 MAX_ACCESS_POINTS_PER_PROFILE = 100
 # Maximum number of profiles allowed per user
 MAX_PROFILES_PER_USER = 10
 # Used to resolve DoH domains
-SUBSTITUTE_DOMAIN="www.okx.com"
-IP_REGION_CN = """
-[
-  {
-    "ip": "198.41.222.102",
-    "area": "SG"
-  },
-  {
-    "ip": "173.245.59.246",
-    "area": "SG"
-  },
-  {
-    "ip": "104.18.47.174",
-    "area": "HK"
-  },
-  {
-    "ip": "104.19.50.3",
-    "area": "HK"
-  }
-]
-"""
+SUBSTITUTE_DOMAIN="www.wto.org"
 # Time constants
 # Session duration for authenticated users by default (in minutes)
 DEFAULT_SESSION_EXPIRATION_MINUTES=1440
@@ -111,6 +108,10 @@ SESSION_GEO_DISTANCE_KM=50
 PREAUTH_TTL_SECONDS=300
 # In-memory retention time for profile bloom filters (in milliseconds)
 BLOOM_MEM_TTL=600000
+# In-memory retention time for profile config per isolate (in milliseconds).
+# Bounds how long a settings change takes to reach isolates that already cached it;
+# the Cache-Tag purge clears colo caches but cannot reach other isolates' memory.
+CONFIG_MEM_TTL=300000
 # Timeout threshold when downloading upstream blocklists (in milliseconds)
 SYNC_TIMEOUT_MS=30000
 # Number of days of inactivity before an account is cleared by cron jobs

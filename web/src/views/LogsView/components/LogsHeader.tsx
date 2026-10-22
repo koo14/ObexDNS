@@ -16,7 +16,7 @@ export interface LogsHeaderProps {
   customRange: { start: string; end: string };
   setCustomRange: (cr: { start: string; end: string }) => void;
   nowStr: string;
-  fetchLogs: (range: TimeRange, initial: boolean) => void;
+  fetchLogs: (range: TimeRange, initial: boolean, isAutoRefresh?: boolean, forceSync?: boolean) => void;
   isMobile: boolean;
   realtimeRefresh: boolean;
   setRealtimeRefresh: (val: boolean) => void;
@@ -35,6 +35,8 @@ export interface LogsHeaderProps {
   logRetentionDays: number;
   onExport: () => void;
   exporting: boolean;
+  loading?: boolean;
+  syncing?: boolean;
 }
 
 export const LogsHeader: React.FC<LogsHeaderProps> = ({
@@ -63,6 +65,8 @@ export const LogsHeader: React.FC<LogsHeaderProps> = ({
   logRetentionDays,
   onExport,
   exporting,
+  loading = false,
+  syncing = false,
 }) => {
   const { t } = useTranslation();
   const [isCollapsed, setIsCollapsed] = useState(true);
@@ -145,7 +149,13 @@ export const LogsHeader: React.FC<LogsHeaderProps> = ({
                 onChange={(e) => setRealtimeRefresh((e.target as HTMLInputElement).checked)}
                 className="mb-0!"
               />
-              <Button icon="refresh" onClick={() => fetchLogs(range, true)} variant="minimal" small={isMobile} />
+              <Button
+                icon="refresh"
+                onClick={() => fetchLogs(range, true, false, true)}
+                loading={loading || syncing}
+                variant="minimal"
+                small={isMobile}
+              />
             </div>
           </div>
         )}

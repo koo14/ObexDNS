@@ -19,32 +19,26 @@ export class ProfileModel {
 
   async findByKey(profileKey: string): Promise<ProfileWithBloom & { access_point_id?: string, access_point_name?: string } | null> {
     try {
-      // 1. First attempt to match access point token (fast index seek via idx_access_points_token)
-      const apMatch = await this.db.prepare(`
-        SELECT p.*, ap.id as access_point_id, ap.name as access_point_name 
-        FROM access_points ap 
-        JOIN profiles p ON ap.profile_id = p.id 
-        WHERE ap.token = ?
+      const match = await this.db.prepare(`
+        SELECT * FROM (
+          SELECT p.*, ap.id as access_point_id, ap.name as access_point_name, 1 as priority
+          FROM access_points ap
+          JOIN profiles p ON ap.profile_id = p.id
+          WHERE ap.token = ?
+          UNION ALL
+          SELECT p.*, NULL as access_point_id, NULL as access_point_name, 2 as priority
+          FROM profiles p
+          WHERE p.profile_key = ? OR p.id = ?
+        )
+        ORDER BY priority ASC
+        LIMIT 1
       `)
-        .bind(profileKey)
+        .bind(profileKey, profileKey, profileKey)
         .first<ProfileWithBloom & { access_point_id?: string, access_point_name?: string }>();
 
-      if (apMatch) {
-        return apMatch;
-      }
-
-      // 2. Fallback to profile_key or profile id direct match (index seek)
-      const profileMatch = await this.db.prepare(`
-        SELECT p.*, NULL as access_point_id, NULL as access_point_name 
-        FROM profiles p 
-        WHERE p.profile_key = ? OR p.id = ?
-      `)
-        .bind(profileKey, profileKey)
-        .first<ProfileWithBloom & { access_point_id?: string, access_point_name?: string }>();
-
-      return profileMatch || null;
+      return match || null;
     } catch (e: any) {
-      console.warn("[ProfileModel] findByKey D1 query failed:", e.message || e);
+      console.warn("[ProfileModel] findByKey query failed:", e.message || e);
       return null;
     }
   }
@@ -99,10 +93,6 @@ export class ProfileModel {
 
   async delete(id: string): Promise<boolean> {
     const results = await this.db.batch([
-      this.db.prepare("DELETE FROM domain_hourly_rollups WHERE profile_id = ?").bind(id),
-      this.db.prepare("DELETE FROM log_hourly_rollups WHERE profile_id = ?").bind(id),
-      this.db.prepare("DELETE FROM client_hourly_rollups WHERE profile_id = ?").bind(id),
-      this.db.prepare("DELETE FROM destination_hourly_rollups WHERE profile_id = ?").bind(id),
       this.db.prepare("DELETE FROM logs WHERE profile_id = ?").bind(id),
       this.db.prepare("DELETE FROM profiles WHERE id = ?").bind(id)
     ]);
@@ -111,10 +101,6 @@ export class ProfileModel {
 
   async deleteByOwner(ownerId: string): Promise<boolean> {
     const results = await this.db.batch([
-      this.db.prepare("DELETE FROM domain_hourly_rollups WHERE profile_id IN (SELECT id FROM profiles WHERE owner_id = ?)").bind(ownerId),
-      this.db.prepare("DELETE FROM log_hourly_rollups WHERE profile_id IN (SELECT id FROM profiles WHERE owner_id = ?)").bind(ownerId),
-      this.db.prepare("DELETE FROM client_hourly_rollups WHERE profile_id IN (SELECT id FROM profiles WHERE owner_id = ?)").bind(ownerId),
-      this.db.prepare("DELETE FROM destination_hourly_rollups WHERE profile_id IN (SELECT id FROM profiles WHERE owner_id = ?)").bind(ownerId),
       this.db.prepare("DELETE FROM logs WHERE profile_id IN (SELECT id FROM profiles WHERE owner_id = ?)").bind(ownerId),
       this.db.prepare("DELETE FROM profiles WHERE owner_id = ?").bind(ownerId)
     ]);

@@ -1,9 +1,9 @@
 node_modules
 static
 dist
+dist-*
 build
 .wrangler
-package-lock.json
 /web/stats.html
 .env
 .vscode
@@ -11,3 +11,6 @@ data/
 *.sqlite*
 dev-dist
 .dev.vars
+temp_*
+.astro
+.vite-cache

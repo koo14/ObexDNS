@@ -5,17 +5,39 @@ import { ProfileBloomModel } from "../models/profileBloom";
 import { BloomFilter } from "../utils/bloom";
 import { cacheUtils } from "../utils/cache";
 import { configCache, bloomMemoryMap } from "./cache";
+import { DEFAULT_FAIL_OPEN_UPSTREAM } from "../constants/presets";
 
 export const pipelineConfig = {
   async load(context: Context, track: (name: string) => void): Promise<{ settings: ProfileSettings; rules: Rule[]; bloom?: BloomFilter } | null> {
     const { profileId, env, ctx } = context;
+
+    // Fast-path: Default profile for unauthenticated access points or emergency fail-open
+    if (profileId === 'default') {
+      const failOpenUpstream = env.FAIL_OPEN_UPSTREAM || DEFAULT_FAIL_OPEN_UPSTREAM;
+      const defaultSettings: ProfileSettings = {
+        upstream: [failOpenUpstream],
+        default_policy: "ALLOW",
+        log_retention_days: 0,
+        ecs: { enabled: true, use_client_ip: true }
+      };
+      return { settings: defaultSettings, rules: [], bloom: undefined };
+    }
 
     // 1. 检查 L1 Memory (Isolate Global)
     const inMem = bloomMemoryMap.get(profileId);
     const cachedConfig = configCache.get(profileId);
     
     const bloomMemTtl = Number(env.BLOOM_MEM_TTL) || 600000;
-    const configMemTtl = 300000; // 5 minutes memory TTL for config
+    // Per-isolate memory TTL for profile config (default 5 minutes).
+    // The Cache-Tag purge clears the L2 Cache API entry in every colo, but not
+    // the in-memory copy held by other isolates, so this TTL bounds how long a
+    // settings change can take to apply everywhere. Only a finite positive
+    // value is accepted: a negative one would disable L1 hits entirely and
+    // Infinity would stop the entry from ever expiring.
+    const configuredMemTtl = Number(env.CONFIG_MEM_TTL) || 300000;
+    const configMemTtl = Number.isFinite(configuredMemTtl) && configuredMemTtl > 0
+      ? configuredMemTtl
+      : 300000;
     if (cachedConfig && (Date.now() - (cachedConfig.timestamp || 0) < configMemTtl)) {
       track('load_config_l1_mem');
       const validBloom = (inMem && Date.now() - inMem.ts < bloomMemTtl) ? inMem.bloom : undefined;
@@ -25,7 +47,7 @@ export const pipelineConfig = {
     // 2. 检查 L2 Cache API
     const cache = (caches as any).default;
     const profileCacheKey = `profile_v6:${profileId}`;
-    const bloomInternalUrl = `https://obex.local/bloom-bin/${profileId}`;
+    const bloomInternalUrl = cacheUtils.generateCacheUrl(`bloom-bin:${profileId}`);
     
     let apiCached = await cacheUtils.get<any>(cache, profileCacheKey);
     let bloom: BloomFilter | undefined;
@@ -116,7 +138,7 @@ export const pipelineConfig = {
       // 容灾模式 2: Emergency Safe Default Fallback
       // 当 D1 读额度耗尽且无缓存时，使用内置安全上游兜底，保证 DNS 绝不报 500 断网
       console.warn(`[Config] Serving emergency fail-open safe fallback for profile ${profileId}`);
-      const failOpenUpstream = env.FAIL_OPEN_UPSTREAM || "https://freedns.controld.com/no-ads-malware-typo";
+      const failOpenUpstream = env.FAIL_OPEN_UPSTREAM || DEFAULT_FAIL_OPEN_UPSTREAM;
       const fallbackSettings: ProfileSettings = {
         upstream: [failOpenUpstream],
         default_policy: "ALLOW",
