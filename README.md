@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/Obein/DNS-Worker/main/web/src/assets/obex_cat_eye_logo-256.webp" alt="DNS Worker Logo" width="128">
   <h1>DNS Worker</h1>
-  <p>Privacy-First Protective DNS Resolver & DoH / DoT Server</p>
+  <p>Privacy-First Protective DNS Resolver & DoH / DoT Server & AD Blocker</p>
   <p>Protect your first hop on the internet</p>
   <p align="center">
     English | <a href="README_zh-CN.md">中文 (简体)</a> | <a href="README_zh-TW.md">中文 (正體)</a>
@@ -69,7 +69,7 @@ docker run -d \
 - 🗄️ **Multi-Database Engines**: Easily switch between `D1`, `Turso`, and `File` backends via the `DATABASE_SERVICE` environment variable, eliminating D1 free-tier quota limits.
 - 🛡️ **Post-Quantum Zero-Knowledge E2EE**: NIST FIPS 203 **P256-MLKEM768** hybrid lattice cryptography + Hardware Passkeys (WebAuthn).
 - 🚀 **Local-First Architecture**: Embedded in-browser WebAssembly SQLite + OPFS for instant 0ms log analytics and charting.
-- 🛡️ **Granular Protection & Ad Blocking**: Built-in ad and malicious domain blocking, wildcard filtering, Bloom filter accelerated blocklist subscriptions, custom overrides, and ECH fronting.
+- 🛡️ **Tiered Hybrid Protection & Ad Blocking**: Native compatibility with AdGuard Home syntax (`@@` whitelist hash set exceptions, `$dnsrewrite`, regex pool), dual-state prefix-encoded Bloom filter for millions of blocklist entries, configurable subdomain matching per rule, on-demand single-list sync, and staggered anti-burst pacing.
 
 ---
 

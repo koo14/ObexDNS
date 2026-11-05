@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/Obein/DNS-Worker/main/web/src/assets/obex_cat_eye_logo-256.webp" alt="DNS Worker Logo" width="128">
   <h1>DNS Worker</h1>
-  <p>隐私优先 Protective DNS 解析器 & DoH / DoT 服务端</p>
+  <p>隐私优先 Protective DNS 解析器 & DoH / DoT 服务端 & 广告拦截器</p>
   <p>保护您的互联网第一跳</p>
   <p align="center">
     <a href="README.md">English</a> | 中文 (简体) | <a href="README_zh-TW.md">中文 (正體)</a>
@@ -69,7 +69,7 @@ docker run -d \
 - 🗄️ **多数据库自由切换**：支持 `D1`、`Turso`、`File` 多种数据库后端（通过 `DATABASE_SERVICE` 一键无缝切换），破解原生 D1 免费层用量限制。
 - 🛡️ **后量子零知识 E2EE**：NIST FIPS 203 **P256-MLKEM768** 混合格密码学 + 硬件通行密钥（Passkey / WebAuthn）。
 - 🚀 **本地优先 (Local-First)**：浏览器端 WebAssembly SQLite + OPFS，0ms 瞬间日志查询与统计分析。
-- 🛡️ **精细防护与广告拦截**：广告与恶意域名拦截、域名通配过滤、百万级外部规则布隆过滤器秒级命中、自定义解析覆盖与 ECH 伪装。
+- 🛡️ **分层混合防护与广告拦截**：原生兼容 AdGuard Home 语法（`@@` 白名单例外散列表、`$dnsrewrite` 重写、正则表达式池）、双态前缀布隆过滤器秒级精准命中、百万级外部规则库、自定义规则可选子域名匹配、单列表独立同步与平滑防并发时延。
 
 ---
 
