@@ -1,9 +1,8 @@
 import { OverlayToaster } from "@blueprintjs/core";
+import type { Profile } from "../../types/auth";
 
 export interface SetupViewProps {
-  profileId: string;
-  profileKey: string;
-  profileName?: string;
+  profiles: Profile[];
   toasterRef?: React.RefObject<OverlayToaster | null>;
 }
 
@@ -20,4 +19,6 @@ export interface ClientInfo {
   dotDomain?: string;
   isServerfull?: boolean;
   mode?: "serverfull" | "cloudflare";
+  isDemoMode?: boolean;
+  demoDomain?: string;
 }

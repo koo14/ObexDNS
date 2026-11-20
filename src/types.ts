@@ -60,6 +60,8 @@ export interface Env {
   TURSO_URL?: string;
   TURSO_AUTH_TOKEN?: string;
   DATABASE_SERVICE?: 'D1' | 'Turso' | 'File' | string;
+  DEMO_MODE?: string | boolean;
+  DEMO_DOMAIN?: string;
   [key: string]: any;
 }
 
@@ -291,7 +293,8 @@ export interface Context {
 
 export interface AccessPoint {
   id: string;
-  profile_id: string;
+  owner_id?: string;
+  profile_id: string | null;
   name: string;
   token: string;
   created_at: number;

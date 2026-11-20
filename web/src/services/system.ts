@@ -4,6 +4,8 @@ import { syncDeploymentModeFromClientInfo } from "../hooks/useDeploymentMode";
 export interface SubstituteInfo {
   ip: string | null;
   ipv6: string | null;
+  ipv4List?: string[];
+  ipv6List?: string[];
 }
 
 export interface TraceInfo {
@@ -15,7 +17,7 @@ export async function getClientInfo(): Promise<ClientInfo> {
   const res = await fetch("/api/clientinfo");
   if (!res.ok) throw new Error("Failed to fetch client info");
   const data = (await res.json()) as ClientInfo;
-  syncDeploymentModeFromClientInfo(data.isServerfull, data.mode);
+  syncDeploymentModeFromClientInfo(data.isServerfull, data.mode, data.isDemoMode, data.demoDomain);
   return data;
 }
 
