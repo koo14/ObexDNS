@@ -1,6 +1,7 @@
 import { D1Database } from "@cloudflare/workers-types";
 import { LogAggregationModel } from "../aggregation";
 import { ActionCountResult, TimeSeriesTrendPoint } from "./types";
+import { computeRollupWindow, buildRollupUnionParts } from "./rollupWindow";
 
 /**
  * Handles action volume summaries and time-series trend analytics.
@@ -38,8 +39,8 @@ export class LogTrafficAnalytics {
     status?: string,
     exact?: boolean
   ): Promise<ActionCountResult[]> {
-    // If granular search, device, country, isp, status filters, or exact flag are applied, query raw logs directly
-    if (exact || search || accessPointId || destCountry || isp || status || !this.aggregation) {
+    // Only fall back to raw logs when filters cannot be served by hourly_rollups (`action`, `access_point_id`).
+    if (exact || search || destCountry || isp || !this.aggregation) {
       let queryStr =
         "SELECT action, COUNT(*) as count FROM logs WHERE profile_id = ? AND timestamp >= ? AND timestamp <= ?";
       const params: (string | number)[] = [profileId, since, until];
@@ -80,49 +81,69 @@ export class LogTrafficAnalytics {
     }
 
     const latestRollupHour = await this.aggregation.getLatestRollupHour(profileId);
-    const cutoff = latestRollupHour !== null ? latestRollupHour + 3600 : since;
+    const window = computeRollupWindow(since, until, latestRollupHour);
 
-    // Case 1: No rollups available or entire range is after cutoff -> query raw logs only
-    if (cutoff <= since) {
+    if (!window.useRollups) {
+      let queryStr =
+        "SELECT action, COUNT(*) as count FROM logs WHERE profile_id = ? AND timestamp >= ? AND timestamp <= ?";
+      const params: (string | number)[] = [profileId, since, until];
+      if (accessPointId) {
+        queryStr += " AND access_point_id = ?";
+        params.push(accessPointId);
+      }
+      if (status) {
+        queryStr += " AND action = ?";
+        params.push(status);
+      }
+      queryStr += " GROUP BY action";
       const { results } = await this.db
-        .prepare(
-          "SELECT action, COUNT(*) as count FROM logs WHERE profile_id = ? AND timestamp >= ? AND timestamp <= ? GROUP BY action"
-        )
-        .bind(profileId, since, until)
+        .prepare(queryStr)
+        .bind(...params)
         .all<ActionCountResult>();
       return results;
     }
 
-    // Case 2: Entire range is within completed rollups
-    if (cutoff > until) {
-      const sinceHour = Math.floor(since / 3600) * 3600;
-      const { results } = await this.db
-        .prepare(
-          "SELECT key as action, SUM(count) as count FROM hourly_rollups WHERE profile_id = ? AND metric_type = 'action' AND hour_timestamp >= ? AND hour_timestamp <= ? GROUP BY key"
-        )
-        .bind(profileId, sinceHour, until)
-        .all<ActionCountResult>();
-      return results;
-    }
+    const union = buildRollupUnionParts(
+      since,
+      until,
+      window,
+      (startHour, endHour) => {
+        let where = "profile_id = ? AND metric_type = 'action' AND hour_timestamp >= ? AND hour_timestamp < ?";
+        const params: (string | number)[] = [profileId, startHour, endHour];
+        if (accessPointId) {
+          where += " AND access_point_id = ?";
+          params.push(accessPointId);
+        }
+        if (status) {
+          where += " AND key = ?";
+          params.push(status);
+        }
+        return {
+          sql: `SELECT key as action, count FROM hourly_rollups WHERE ${where}`,
+          params
+        };
+      },
+      (fromTs, toTs) => {
+        let where = "profile_id = ? AND timestamp >= ? AND timestamp <= ?";
+        const params: (string | number)[] = [profileId, fromTs, toTs];
+        if (accessPointId) {
+          where += " AND access_point_id = ?";
+          params.push(accessPointId);
+        }
+        if (status) {
+          where += " AND action = ?";
+          params.push(status);
+        }
+        return {
+          sql: `SELECT action, COUNT(*) as count FROM logs WHERE ${where} GROUP BY action`,
+          params
+        };
+      }
+    );
 
-    // Case 3: Spans historical rollups and unaggregated logs -> Hybrid UNION ALL query
-    const sinceHour = Math.floor(since / 3600) * 3600;
     const { results } = await this.db
-      .prepare(
-        `
-      SELECT action, SUM(count) as count FROM (
-        SELECT key as action, count
-        FROM hourly_rollups
-        WHERE profile_id = ? AND metric_type = 'action' AND hour_timestamp >= ? AND hour_timestamp < ?
-        UNION ALL
-        SELECT action, COUNT(*) as count
-        FROM logs
-        WHERE profile_id = ? AND timestamp >= ? AND timestamp <= ?
-        GROUP BY action
-      ) GROUP BY action
-    `
-      )
-      .bind(profileId, sinceHour, cutoff, profileId, cutoff, until)
+      .prepare(`SELECT action, SUM(count) as count FROM (${union.sql}) GROUP BY action`)
+      .bind(...union.params)
       .all<ActionCountResult>();
 
     return results;
@@ -148,8 +169,9 @@ export class LogTrafficAnalytics {
     const isHourly = interval.includes("3600");
     const isDaily = interval.includes("86400");
 
-    // If device-specific, non-standard interval, or rollups disabled, query raw logs directly
-    if (accessPointId || (!isHourly && !isDaily) || !this.aggregation) {
+    // If sub-hour interval or rollups disabled, query raw logs directly;
+    // hourly/daily intervals with accessPointId are supported directly by hourly_rollups.
+    if ((!isHourly && !isDaily) || !this.aggregation) {
       const SAFE_INTERVALS = new Set([
         "(timestamp/60)*60",
         "(timestamp/300)*300",
@@ -174,48 +196,58 @@ export class LogTrafficAnalytics {
     }
 
     const latestRollupHour = await this.aggregation.getLatestRollupHour(profileId);
-    const cutoff = latestRollupHour !== null ? latestRollupHour + 3600 : since;
+    const window = computeRollupWindow(since, until, latestRollupHour);
     const rollupInterval = isDaily ? "(hour_timestamp / 86400) * 86400" : "hour_timestamp";
     const logsInterval = isDaily ? "(timestamp / 86400) * 86400" : "(timestamp / 3600) * 3600";
 
-    // Case 1: No rollups available or entire range is after cutoff -> query raw logs only
-    if (cutoff <= since) {
-      const queryStr = `SELECT ${logsInterval} as timestamp, action, COUNT(*) as count FROM logs WHERE profile_id = ? AND timestamp >= ? AND timestamp <= ? GROUP BY ${logsInterval}, action ORDER BY timestamp ASC`;
+    if (!window.useRollups) {
+      let queryStr = `SELECT ${logsInterval} as timestamp, action, COUNT(*) as count FROM logs WHERE profile_id = ? AND timestamp >= ? AND timestamp <= ?`;
+      const params: (string | number)[] = [profileId, since, until];
+      if (accessPointId) {
+        queryStr += " AND access_point_id = ?";
+        params.push(accessPointId);
+      }
+      queryStr += ` GROUP BY ${logsInterval}, action ORDER BY timestamp ASC`;
       const { results } = await this.db
         .prepare(queryStr)
-        .bind(profileId, since, until)
+        .bind(...params)
         .all<TimeSeriesTrendPoint>();
       return results;
     }
 
-    // Case 2: Entire range is within completed rollups
-    if (cutoff > until) {
-      const sinceHour = Math.floor(since / 3600) * 3600;
-      const queryStr = `SELECT ${rollupInterval} as timestamp, key as action, SUM(count) as count FROM hourly_rollups WHERE profile_id = ? AND metric_type = 'action' AND hour_timestamp >= ? AND hour_timestamp <= ? GROUP BY ${rollupInterval}, key ORDER BY timestamp ASC`;
-      const { results } = await this.db
-        .prepare(queryStr)
-        .bind(profileId, sinceHour, until)
-        .all<TimeSeriesTrendPoint>();
-      return results;
-    }
+    const union = buildRollupUnionParts(
+      since,
+      until,
+      window,
+      (startHour, endHour) => {
+        let where = "profile_id = ? AND metric_type = 'action' AND hour_timestamp >= ? AND hour_timestamp < ?";
+        const params: (string | number)[] = [profileId, startHour, endHour];
+        if (accessPointId) {
+          where += " AND access_point_id = ?";
+          params.push(accessPointId);
+        }
+        return {
+          sql: `SELECT ${rollupInterval} as timestamp, key as action, count FROM hourly_rollups WHERE ${where}`,
+          params
+        };
+      },
+      (fromTs, toTs) => {
+        let where = "profile_id = ? AND timestamp >= ? AND timestamp <= ?";
+        const params: (string | number)[] = [profileId, fromTs, toTs];
+        if (accessPointId) {
+          where += " AND access_point_id = ?";
+          params.push(accessPointId);
+        }
+        return {
+          sql: `SELECT ${logsInterval} as timestamp, action, COUNT(*) as count FROM logs WHERE ${where} GROUP BY ${logsInterval}, action`,
+          params
+        };
+      }
+    );
 
-    // Case 3: Hybrid query spanning historical rollups and unaggregated logs
-    const sinceHour = Math.floor(since / 3600) * 3600;
-    const queryStr = `
-      SELECT timestamp, action, SUM(count) as count FROM (
-        SELECT ${rollupInterval} as timestamp, key as action, count
-        FROM hourly_rollups
-        WHERE profile_id = ? AND metric_type = 'action' AND hour_timestamp >= ? AND hour_timestamp < ?
-        UNION ALL
-        SELECT ${logsInterval} as timestamp, action, COUNT(*) as count
-        FROM logs
-        WHERE profile_id = ? AND timestamp >= ? AND timestamp <= ?
-        GROUP BY ${logsInterval}, action
-      ) GROUP BY timestamp, action ORDER BY timestamp ASC
-    `;
     const { results } = await this.db
-      .prepare(queryStr)
-      .bind(profileId, sinceHour, cutoff, profileId, cutoff, until)
+      .prepare(`SELECT timestamp, action, SUM(count) as count FROM (${union.sql}) GROUP BY timestamp, action ORDER BY timestamp ASC`)
+      .bind(...union.params)
       .all<TimeSeriesTrendPoint>();
 
     return results;

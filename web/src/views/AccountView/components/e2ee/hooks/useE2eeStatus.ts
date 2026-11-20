@@ -45,6 +45,14 @@ export function useE2eeStatus({
 
   useEffect(() => {
     loadStatus();
+  }, [loadStatus, user.passkeys_count]);
+
+  useEffect(() => {
+    const handleE2eeUpdated = () => {
+      void loadStatus();
+    };
+    window.addEventListener("dns-worker:e2ee-updated", handleE2eeUpdated);
+    return () => window.removeEventListener("dns-worker:e2ee-updated", handleE2eeUpdated);
   }, [loadStatus]);
 
   const hasPasskey =

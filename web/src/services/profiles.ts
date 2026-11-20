@@ -151,6 +151,22 @@ export async function syncProfileLists(profileId: string): Promise<void> {
   if (!res.ok) throw new Error(await res.text());
 }
 
+export interface SyncProgress {
+  syncing: boolean;
+  type?: "all" | "single" | "next" | "rebuild";
+  listId?: number;
+  stage: "preparing" | "fetching" | "combining" | "done";
+  current: number;
+  total: number;
+  percent: number;
+}
+
+export async function getProfileSyncStatus(profileId: string): Promise<SyncProgress> {
+  const res = await profileFetch(`/api/profiles/${profileId}/lists/sync-status`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function syncSingleProfileList(profileId: string, listId: number): Promise<void> {
   const res = await profileFetch(`/api/profiles/${profileId}/lists/${listId}/sync`, {
     method: "POST"
@@ -212,6 +228,19 @@ export async function deleteProfileRule(profileId: string, ruleId: number): Prom
     body: JSON.stringify({ id: ruleId })
   });
   if (!res.ok) throw new Error(await res.text());
+}
+
+/**
+ * Deletes multiple custom rules from a profile in a single batch API call.
+ */
+export async function deleteProfileRulesBulk(profileId: string, ruleIds: number[]): Promise<{ success: boolean; count: number }> {
+  const res = await profileFetch(`/api/profiles/${profileId}/rules`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: ruleIds })
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
 export async function getProfileAccessPoints(profileId: string): Promise<AccessPoint[]> {

@@ -71,46 +71,11 @@ export async function fetchGeoIP(ip: string): Promise<GeoIP | null> {
     }
   };
 
-  // 1. Primary provider: ip-api.com
+  // 1. Primary provider: ipwho.is (HTTPS, no auth required)
   try {
-    const response = await fetch(
-      `http://ip-api.com/json/${ip}?fields=status,country,countryCode,regionName,city,isp,org,as,timezone`,
-      {
-        cf: {
-          cacheTtlByStatus: {
-            "200-299": 86400 * 14, // 14 days
-            "400-499": 5,
-            "500-599": 0,
-          },
-          cacheEverything: true,
-        },
-      }
-    );
-    if (response.ok) {
-      const data = (await response.json()) as any;
-      if (data.status === "success") {
-        const effectiveIsp = data.isp || data.org || (data.as ? data.as.replace(/^AS\d+\s+/, "") : undefined);
-        const geo: GeoIP = {
-          country: data.country,
-          country_code: data.countryCode,
-          region: data.regionName,
-          city: data.city,
-          isp: effectiveIsp,
-          org: data.org,
-          as: data.as,
-          timezone: data.timezone,
-        };
-        await storeInCache(geo);
-        return geo;
-      }
-    }
-  } catch {
-    // Fall through to fallback provider
-  }
-
-  // 2. Secondary fallback provider: ipwho.is (HTTPS, no auth required)
-  try {
-    const response2 = await fetch(`https://ipwho.is/${ip}`);
+    const response2 = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, {
+      signal: AbortSignal.timeout(3500),
+    });
     if (response2.ok) {
       const data2 = (await response2.json()) as any;
       if (data2.success) {
@@ -132,7 +97,33 @@ export async function fetchGeoIP(ip: string): Promise<GeoIP | null> {
       }
     }
   } catch (e2) {
-    console.error("GeoIP Fetch Error:", e2);
+    console.warn("Primary GeoIP (ipwho.is) failed, trying fallback:", e2);
+  }
+
+  // 2. Fallback provider: api.ip.sb (when ipwho.is rate-limits or times out)
+  try {
+    const fallbackRes = await fetch(`https://api.ip.sb/geoip/${encodeURIComponent(ip)}`, {
+      signal: AbortSignal.timeout(3500),
+    });
+    if (fallbackRes.ok) {
+      const data = (await fallbackRes.json()) as any;
+      if (data.country_code && data.country) {
+        const geo: GeoIP = {
+          country: data.country,
+          country_code: data.country_code,
+          region: data.region,
+          city: data.city,
+          isp: data.isp || data.organization || (data.asn ? `AS${data.asn}` : undefined),
+          org: data.organization,
+          as: data.asn ? `AS${data.asn} ${data.asn_organization || data.organization || ""}`.trim() : undefined,
+          timezone: data.timezone,
+        };
+        await storeInCache(geo);
+        return geo;
+      }
+    }
+  } catch (eFallback) {
+    console.error("GeoIP fallback Fetch Error:", eFallback);
   }
 
   return null;

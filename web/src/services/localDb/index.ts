@@ -101,9 +101,10 @@ export class LocalDbService {
     since: number,
     until: number,
     signal?: AbortSignal,
-    onProgress?: (inserted: number) => void
+    onProgress?: (inserted: number) => void,
+    expectedCount?: number
   ): Promise<number> {
-    return this.syncEngine.syncMissingIntervals(profileId, since, until, signal, onProgress);
+    return this.syncEngine.syncMissingIntervals(profileId, since, until, signal, onProgress, expectedCount);
   }
 
   /** Synchronizes target time interval records with chunked transfer and progress reporting */
@@ -161,6 +162,11 @@ export class LocalDbService {
   /** Clears all local data for a profile */
   async clearProfile(profileId: string): Promise<void> {
     return this.maintenanceService.clearProfile(profileId);
+  }
+
+  /** Clears all local logs, watermarks, and sync checkpoints across all profiles */
+  async clearAll(): Promise<void> {
+    return this.maintenanceService.clearAll();
   }
 
   /** Re-decrypts any local logs that were previously stored encrypted */

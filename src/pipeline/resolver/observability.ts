@@ -39,9 +39,21 @@ export function recordSuccessAndCache(
     (async () => {
       try {
         const clientCountryPromise = resolveClientGeoCountry(request, clientIp);
-        const firstIp = parsedAnswers.find(
+        let firstIp = parsedAnswers.find(
           (a) => a.type === "A" || a.type === "AAAA"
         )?.data;
+        if (!firstIp) {
+          // HTTPS (Type 65) / SVCB (Type 64) records often carry ipv4hint / ipv6hint in RDATA
+          const svcbAnswer = parsedAnswers.find(
+            (a) => (a.type === "HTTPS" || a.type === "SVCB") && typeof a.data === "string"
+          );
+          if (svcbAnswer) {
+            const hintMatch = svcbAnswer.data.match(/\b(?:ipv4hint|ipv6hint)=([^\s,]+)/);
+            if (hintMatch?.[1]) {
+              firstIp = hintMatch[1];
+            }
+          }
+        }
         let destGeoJson = "";
         let destCountryCode: string | null = null;
         let destCountry: string | null = null;
@@ -84,13 +96,22 @@ export function recordSuccessAndCache(
           context.ctx
         );
 
-        if (answer.length > 0) {
-          dnsCache.set(`${context.profileId}:${query.name}:${query.type}`, {
+        const rcode = answer.length >= 12 ? answer[3] & 0x0f : -1;
+        const pauseExpiresMs =
+          effectiveReason === "Filtering Paused" &&
+          settings.pause_filtering?.expires_at &&
+          settings.pause_filtering.expires_at > 0
+            ? settings.pause_filtering.expires_at * 1000
+            : Infinity;
+        const cacheExpiresAt = Math.min(Date.now() + minTTL * 1000, pauseExpiresMs);
+
+        if (answer.length >= 12 && minTTL > 0 && cacheExpiresAt > Date.now() && (rcode === 0 || rcode === 3)) {
+          dnsCache.set(`${context.profileId}:${query.name.toLowerCase()}:${query.type}`, {
             answer,
             ttl: minTTL,
             action,
             reason: effectiveReason,
-            expiresAt: Date.now() + minTTL * 1000
+            expiresAt: cacheExpiresAt
           });
         }
       } catch {

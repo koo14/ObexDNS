@@ -1,5 +1,5 @@
 import React from "react";
-import { Divider, Switch, Tag, Button, Intent } from "@blueprintjs/core";
+import { Divider, Switch, Tag, Button, Intent, Callout } from "@blueprintjs/core";
 import { KeyRound, RefreshCw, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ProfileE2eeStatus } from "../../../../../services";
@@ -115,12 +115,18 @@ export const E2eeStatusSection: React.FC<E2eeStatusSectionProps> = ({
               <Tag minimal intent={Intent.SUCCESS} className="text-[10px] whitespace-nowrap">
                 {t("account.e2ee.unlocked")}
               </Tag>
-              {hasPasskey && (status?.wrappedPasskeys?.length || 0) === 0 && onEnrollPasskey && (
+              {hasPasskey &&
+                (status?.wrappedPasskeys?.length || 0) < (status?.userPasskeyCount || 1) &&
+                onEnrollPasskey && (
                 <Button
                   small
                   intent={Intent.PRIMARY}
                   icon={<KeyRound size={12} />}
-                  text={t("account.e2ee.enrollPasskeyBtn", "关联当前通行密钥")}
+                  text={
+                    (status?.wrappedPasskeys?.length || 0) === 0
+                      ? t("account.e2ee.enrollPasskeyBtn")
+                      : t("account.e2ee.enrollMorePasskeyBtn")
+                  }
                   loading={processing}
                   onClick={onEnrollPasskey}
                   className="whitespace-nowrap"
@@ -183,6 +189,35 @@ export const E2eeStatusSection: React.FC<E2eeStatusSectionProps> = ({
             {t("account.e2ee.devicesUnit")}
           </span>
         </div>
+
+        {isUnlocked &&
+          hasPasskey &&
+          (status?.userPasskeyCount || 0) > (status?.wrappedPasskeys?.length || 0) &&
+          onEnrollPasskey && (
+          <Callout intent={Intent.PRIMARY} icon={<KeyRound size={15} />} className="mt-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span className="text-xs">
+                {t("account.e2ee.unenrolledPasskeysHint", {
+                  count: (status?.userPasskeyCount || 0) - (status?.wrappedPasskeys?.length || 0),
+                  defaultValue: `You have ${(status?.userPasskeyCount || 0) - (status?.wrappedPasskeys?.length || 0)} Passkey(s) not yet bound to E2EE log decryption.`
+                })}
+              </span>
+              <Button
+                small
+                intent={Intent.PRIMARY}
+                icon={<KeyRound size={12} />}
+                text={
+                  (status?.wrappedPasskeys?.length || 0) === 0
+                    ? t("account.e2ee.enrollPasskeyBtn")
+                    : t("account.e2ee.enrollMorePasskeyBtn")
+                }
+                loading={processing}
+                onClick={onEnrollPasskey}
+                className="whitespace-nowrap shrink-0"
+              />
+            </div>
+          </Callout>
+        )}
       </div>
     </div>
   );

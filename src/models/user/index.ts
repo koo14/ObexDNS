@@ -64,6 +64,13 @@ export class UserModel {
   }
 
   /**
+   * Atomically creates a new user only if registration capacity constraints hold.
+   */
+  async createAtomic(user: CreateUserOptions, maxUsers?: number | null): Promise<"created" | "admin_exists" | "max_users_reached"> {
+    return this.core.createAtomic(user, maxUsers ?? undefined);
+  }
+
+  /**
    * Updates a user's username.
    */
   async updateUsername(id: string, username: string): Promise<boolean> {
@@ -173,7 +180,7 @@ export class UserModel {
    */
   async applyInactivityPolicy(
     now: number,
-    options?: { inactivityDays?: number; inactiveLogPurgeDays?: number }
+    options?: { inactivityDays?: number; inactiveLogPurgeDays?: number; maxLogDeleteRows?: number }
   ): Promise<InactivityPolicyResult> {
     return this.lifecycle.applyInactivityPolicy(now, options);
   }

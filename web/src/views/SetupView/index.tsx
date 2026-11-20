@@ -5,6 +5,7 @@ import { setSystemTimeZone } from "../../utils/date";
 
 import type { SetupViewProps, ClientInfo } from "./types";
 import { useIsMobile } from "../../hooks/useIsMobile";
+import { useDeploymentMode } from "../../hooks/useDeploymentMode";
 import { SetupHeader } from "./components/SetupHeader";
 import { VerifyConnectionCard } from "./components/VerifyConnectionCard";
 import { AccessPointCard } from "./components/AccessPointCard";
@@ -25,12 +26,20 @@ import {
 
 export const SetupView: React.FC<SetupViewProps> = ({ profileId, profileKey, profileName, toasterRef }) => {
   const isMobile = useIsMobile();
+  const { isServerfull } = useDeploymentMode();
   const { t } = useTranslation();
 
   const [accessPoints, setAccessPoints] = useState<AccessPoint[]>([]);
   const [loadingAccessPoints, setLoadingAccessPoints] = useState(false);
   const [isAccessPointDrawerOpen, setIsAccessPointDrawerOpen] = useState(false);
   const [selectedApId, setSelectedApId] = useState<string | null>(null);
+  const [apSwitchCount, setApSwitchCount] = useState(0);
+
+  const handleSelectAp = (id: string) => {
+    if (id === selectedApId) return;
+    setSelectedApId(id);
+    setApSwitchCount((count) => count + 1);
+  };
 
   const fetchAccessPoints = async () => {
     setLoadingAccessPoints(true);
@@ -93,11 +102,16 @@ export const SetupView: React.FC<SetupViewProps> = ({ profileId, profileKey, pro
     try {
       const [clientData, traceResult] = await Promise.all([
         getClientInfo(),
-        getTraceInfo(),
+        isServerfull ? Promise.resolve(null) : getTraceInfo(),
       ]);
 
-      // Fallback GeoIP lookup if country is still unknown
-      if (clientData.ip && (clientData.country === "UNKNOWN" || !clientData.country)) {
+      // Fallback GeoIP lookup if country or city is unknown for a public IP
+      const isPrivateNetwork = clientData.country === "Private Network";
+      const needsGeoFallback =
+        clientData.country === "UNKNOWN" ||
+        !clientData.country ||
+        (!isPrivateNetwork && (clientData.city === "UNKNOWN" || !clientData.city));
+      if (clientData.ip && needsGeoFallback) {
         try {
           const fallbackRes = await fetch(`/api/geoip?ip=${encodeURIComponent(clientData.ip)}`);
           if (fallbackRes.ok) {
@@ -147,7 +161,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ profileId, profileKey, pro
         .catch((e) => console.warn("Failed fetching domain geo location:", e));
 
       // Resolve IPv4 and IPv6 addresses for SUBSTITUTE_DOMAIN (for Windows 11 setup)
-      const targetSubstituteDomain = clientData.substituteDomain || "www.okx.com";
+      const targetSubstituteDomain = clientData.substituteDomain || "www.wto.org";
       getSubstituteInfo()
         .then((sub) => {
           setDomainIps((prev) => {
@@ -188,7 +202,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ profileId, profileKey, pro
     const list: { ip: string; area: string | null }[] = [];
     const v4 = (domainIps.ipv4 || []).slice(0, 2);
     const v6 = (domainIps.ipv6 || []).slice(0, 2);
-    const domainLabel = clientInfo?.substituteDomain || "www.okx.com";
+    const domainLabel = clientInfo?.substituteDomain || "www.wto.org";
 
     for (const ip of v4) {
       list.push({
@@ -227,7 +241,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ profileId, profileKey, pro
       <AccessPointCard
         accessPoints={accessPoints}
         selectedApId={activeAp?.id || null}
-        onSelectAp={setSelectedApId}
+        onSelectAp={handleSelectAp}
         accessPointName={activeName}
         onManageAccessPoints={() => setIsAccessPointDrawerOpen(true)}
         isMobile={isMobile}
@@ -236,12 +250,14 @@ export const SetupView: React.FC<SetupViewProps> = ({ profileId, profileKey, pro
       <DohUrlCard 
         dohUrl={dohUrl} 
         copyToClipboard={copyToClipboard} 
-        isMobile={isMobile} 
+        isMobile={isMobile}
+        flashTrigger={apSwitchCount}
       />
 
       <SetupTabs
         isMobile={isMobile}
         copyToClipboard={copyToClipboard}
+        dohUrl={dohUrl}
         profileKey={activeToken}
         profileName={currentProfileName || undefined}
         accessPointName={activeName}

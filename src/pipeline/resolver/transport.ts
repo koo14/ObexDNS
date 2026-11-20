@@ -2,6 +2,9 @@ import { connectUniversal } from "../../utils/sockets";
 import { parseDnsStamp } from "../../utils/dnsStamp";
 import { http2SessionPool, isHttp2Supported } from "../../utils/http2Client";
 import { getAppUserAgent } from "../../constants/version";
+import { DEFAULT_FAIL_OPEN_UPSTREAM } from "../../constants/presets";
+import { Env, ResolutionResult } from "../../types";
+import { isSafeUrlWithDnsCheck } from "../../utils/validator";
 import { UpstreamHttpError, UpstreamTransportResult } from "./types";
 
 /**
@@ -275,6 +278,9 @@ export async function fetchFromUpstream(
   queryRaw: Uint8Array
 ): Promise<UpstreamTransportResult> {
   const { effectiveUrl, diagMethod, diagTarget } = endpoint;
+  if (!(await isSafeUrlWithDnsCheck(effectiveUrl))) {
+    throw new Error("Blocked unsafe upstream URL");
+  }
   const startFetch = Date.now();
   let answer: Uint8Array;
 
@@ -309,16 +315,7 @@ export async function fetchFromUpstream(
           };
         }
 
-        let snippet = "";
-        try {
-          snippet = new TextDecoder()
-            .decode(h2Res.answer)
-            .replace(/<[^>]*>?/gm, " ")
-            .replace(/\s+/g, " ")
-            .trim()
-            .slice(0, 300);
-        } catch {}
-        throw new UpstreamHttpError(h2Res.status, "HTTP/2 Error", snippet);
+        throw new UpstreamHttpError(h2Res.status, "HTTP/2 Error", "");
       } catch (h2Err) {
         if (h2Err instanceof UpstreamHttpError) {
           throw h2Err;
@@ -332,6 +329,7 @@ export async function fetchFromUpstream(
     // 2. Standard fetch (Cloudflare Workers runtime with edge HTTP/2 negotiation)
     const response = await fetch(effectiveUrl, {
       method: "POST",
+      redirect: "manual",
       headers: {
         Accept: "application/dns-message",
         "Content-Type": "application/dns-message",
@@ -342,14 +340,8 @@ export async function fetchFromUpstream(
     });
 
     if (!response.ok) {
-      let snippet = "";
-      try {
-        const rawBody = await response.text();
-        // Extract plain text snippet (strip HTML tags and extra whitespace), retain max 300 chars
-        snippet = rawBody.replace(/<[^>]*>?/gm, " ").replace(/\s+/g, " ").trim().slice(0, 300);
-      } catch {}
       const cfRay = response.headers.get("cf-ray") || undefined;
-      throw new UpstreamHttpError(response.status, response.statusText, snippet, cfRay);
+      throw new UpstreamHttpError(response.status, response.statusText, "", cfRay);
     }
 
     const answerBuffer = await response.arrayBuffer();
@@ -358,4 +350,38 @@ export async function fetchFromUpstream(
 
   const latency = Date.now() - startFetch;
   return { answer, latency, diagMethod, diagTarget };
+}
+
+/**
+ * Checks whether a failed ResolutionResult already attempted the configured FAIL_OPEN_UPSTREAM.
+ * Prevents duplicate round-trips to an upstream that already failed.
+ *
+ * @param result - ResolutionResult returned by the pipeline.
+ * @param env - Environment bindings containing optional FAIL_OPEN_UPSTREAM override.
+ * @returns True if diagnostics show the query already targeted FAIL_OPEN_UPSTREAM.
+ */
+export function hasAlreadyTriedFailOpen(
+  result: ResolutionResult | null | undefined,
+  env: Partial<Env>
+): boolean {
+  const failOpenUpstream = env.FAIL_OPEN_UPSTREAM || DEFAULT_FAIL_OPEN_UPSTREAM;
+  const diagUrl = result?.diagnostics?.upstream_url;
+  if (!diagUrl) return false;
+  return diagUrl === failOpenUpstream || diagUrl.startsWith(`${failOpenUpstream} (`);
+}
+
+/**
+ * Dispatches a raw DNS wire-format query directly to FAIL_OPEN_UPSTREAM (bypassing DB/filtering).
+ *
+ * @param env - Environment bindings containing optional FAIL_OPEN_UPSTREAM override.
+ * @param queryRaw - Wire-format DNS query packet.
+ * @returns UpstreamTransportResult with raw DNS wire answer.
+ */
+export async function resolveFailOpenFallback(
+  env: Partial<Env>,
+  queryRaw: Uint8Array
+): Promise<UpstreamTransportResult> {
+  const failOpenUpstream = env.FAIL_OPEN_UPSTREAM || DEFAULT_FAIL_OPEN_UPSTREAM;
+  const endpoint = resolveUpstreamEndpoint(failOpenUpstream);
+  return fetchFromUpstream(endpoint, queryRaw);
 }

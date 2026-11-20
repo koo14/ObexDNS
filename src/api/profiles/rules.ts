@@ -21,19 +21,24 @@ export async function handleProfileRulesRequest(
   }
 
   if (request.method === 'POST') {
+    const MAX_PROFILE_RULES = 5000;
+    const MAX_BULK_RULES = 2000;
     const body = await request.json() as any;
 
     // Support bulk insertion when body is an array or contains rules array
     const isBulk = Array.isArray(body) || (body && Array.isArray(body.rules));
     if (isBulk) {
       const rawList: any[] = Array.isArray(body) ? body : body.rules;
+      if (rawList.length > MAX_BULK_RULES) {
+        return new Response(`Bulk request exceeds maximum of ${MAX_BULK_RULES} rules`, { status: 400 });
+      }
       const seen = new Set<string>();
       const validRules: Partial<Rule>[] = [];
 
       for (const r of rawList) {
         if (!r || typeof r.pattern !== 'string') continue;
         const pattern = r.pattern.trim().toLowerCase();
-        if (!pattern || seen.has(pattern)) continue;
+        if (!pattern || pattern.length > 253 || seen.has(pattern)) continue;
         seen.add(pattern);
 
         const type = String(r.type || 'BLOCK').toUpperCase();
@@ -62,6 +67,10 @@ export async function handleProfileRulesRequest(
       const existingPatterns = new Set(existingRules.map(r => r.pattern.trim().toLowerCase()));
       const rulesToInsert = validRules.filter(r => !existingPatterns.has(r.pattern!));
 
+      if (existingRules.length + rulesToInsert.length > MAX_PROFILE_RULES) {
+        return new Response(`Profile rule limit (${MAX_PROFILE_RULES}) exceeded`, { status: 400 });
+      }
+
       let insertedCount = 0;
       if (rulesToInsert.length > 0) {
         insertedCount = await ruleModel.addRulesBulk(profileId, rulesToInsert);
@@ -75,9 +84,13 @@ export async function handleProfileRulesRequest(
     }
 
     const rule = body;
-    const pattern = rule.pattern ? rule.pattern.trim() : "";
-    if (!pattern) {
-      return new Response("Domain pattern cannot be empty", { status: 400 });
+    const pattern = rule.pattern ? String(rule.pattern).trim() : "";
+    if (!pattern || pattern.length > 253) {
+      return new Response("Domain pattern is invalid or empty", { status: 400 });
+    }
+    const existingRules = await ruleModel.getRules(profileId);
+    if (existingRules.length >= MAX_PROFILE_RULES) {
+      return new Response(`Profile rule limit (${MAX_PROFILE_RULES}) exceeded`, { status: 400 });
     }
     const existing = await ruleModel.getRuleByPattern(profileId, pattern);
     if (existing) {
@@ -106,8 +119,40 @@ export async function handleProfileRulesRequest(
   }
 
   if (request.method === 'DELETE') {
-    const { id } = await request.json() as any;
-    await ruleModel.deleteRule(id, profileId);
+    let body: { id?: unknown; ids?: unknown };
+    try {
+      body = (await request.json()) as { id?: unknown; ids?: unknown };
+    } catch {
+      return new Response("Invalid JSON payload", { status: 400 });
+    }
+
+    if (Array.isArray(body?.ids)) {
+      const MAX_BULK_DELETE = 2000;
+      if (body.ids.length === 0) {
+        return new Response("Rule ids cannot be empty", { status: 400 });
+      }
+      if (body.ids.length > MAX_BULK_DELETE) {
+        return new Response(`Bulk delete exceeds maximum of ${MAX_BULK_DELETE} rules`, { status: 400 });
+      }
+      const validIds = body.ids
+        .map((val) => Number(val))
+        .filter((val) => Number.isInteger(val) && val > 0);
+      if (validIds.length === 0) {
+        return new Response("No valid rule ids provided", { status: 400 });
+      }
+      const deletedCount = await ruleModel.deleteRulesBulk(validIds, profileId);
+      ctx.waitUntil(pipeline.clearCache(profileId, false, env));
+      return new Response(JSON.stringify({ success: true, count: deletedCount }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const ruleId = Number(body?.id);
+    if (!Number.isInteger(ruleId) || ruleId <= 0) {
+      return new Response("Invalid rule id", { status: 400 });
+    }
+    await ruleModel.deleteRule(ruleId, profileId);
     ctx.waitUntil(pipeline.clearCache(profileId, false, env));
     return new Response(null, { status: 204 });
   }

@@ -7,7 +7,6 @@ import { verifyUserReauth, ReauthPayload } from "./reauth";
 
 /**
  * Handles emergency recovery keys management endpoints:
- * - POST /api/account/recovery-keys/view (re-authenticate and view decrypted recovery keys)
  * - POST /api/account/recovery-keys/rotate (re-authenticate and rotate recovery keys)
  *
  * @param request - Inbound HTTP Request.
@@ -37,7 +36,7 @@ export async function handleRecoveryKeysRequest(
     const dbUser = await userModel.getById(user.id);
     if (!dbUser) return new Response("User not found", { status: 404 });
 
-    const authResult = await verifyUserReauth(dbUser, body, env, request);
+    const authResult = await verifyUserReauth(dbUser, body, env, request, { sessionId: user.sessionId });
     if (!authResult.success) {
       return new Response(authResult.error || "Authentication failed", { status: 400 });
     }

@@ -68,60 +68,200 @@ export async function ensureTursoMigrationsTable(db: D1Database | TursoD1Databas
   }
 }
 
+function isIdempotentSchemaError(msgLower: string, stmtUpper: string): boolean {
+  const isDuplicateColumn = msgLower.includes('duplicate column name') && stmtUpper.startsWith('ALTER TABLE');
+  const isAlreadyExists = msgLower.includes('already exists') && (stmtUpper.startsWith('CREATE') || stmtUpper.startsWith('ALTER'));
+  return isDuplicateColumn || isAlreadyExists;
+}
+
+function stripWithoutRowidClause(stmt: string): string | null {
+  if (!/\)\s*WITHOUT\s+ROWID\s*;?\s*$/i.test(stmt)) {
+    return null;
+  }
+  return stmt.replace(/\)\s*WITHOUT\s+ROWID\s*;?\s*$/i, ')');
+}
+
+function extractTableRebuildPairs(stmts: string[]): Array<{ tempTable: string; targetTable: string }> {
+  const pairs: Array<{ tempTable: string; targetTable: string }> = [];
+  for (const stmt of stmts) {
+    const match = stmt.match(/ALTER\s+TABLE\s+["'`]?([a-zA-Z0-9_]+)["'`]?\s+RENAME\s+TO\s+["'`]?([a-zA-Z0-9_]+)["'`]?/i);
+    if (match && match[1] && match[2] && match[1] !== match[2]) {
+      pairs.push({ tempTable: match[1], targetTable: match[2] });
+    }
+  }
+  return pairs;
+}
+
+async function recoverInterruptedTableRebuilds(
+  db: D1Database | TursoD1Database,
+  pairs: Array<{ tempTable: string; targetTable: string }>
+): Promise<boolean> {
+  let recovered = false;
+  for (const { tempTable, targetTable } of pairs) {
+    const rows = await db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)")
+      .bind(tempTable, targetTable)
+      .all<{ name: string }>();
+    const existing = new Set((rows.results || []).map((r) => r.name));
+    if (existing.has(tempTable) && existing.has(targetTable)) {
+      console.warn(`[Migrations] Dropping leftover temporary table "${tempTable}" before retrying migration.`);
+      await db.prepare(`DROP TABLE IF EXISTS "${tempTable}"`).run();
+      recovered = true;
+    } else if (existing.has(tempTable) && !existing.has(targetTable)) {
+      console.warn(`[Migrations] Completing interrupted rename "${tempTable}" -> "${targetTable}".`);
+      await db.prepare(`ALTER TABLE "${tempTable}" RENAME TO "${targetTable}"`).run();
+      recovered = true;
+    }
+  }
+  return recovered;
+}
+
+async function runSingleMigrationStmt(
+  db: D1Database | TursoD1Database,
+  stmt: string,
+  stmtIndex: number,
+  disableForeignKeys = false
+): Promise<void> {
+  if ('executePipeline' in db && typeof (db as any).executePipeline === 'function') {
+    const pipelineReqs: Array<{ type: 'execute'; stmt: { sql: string } } | { type: 'close' }> = [];
+    if (disableForeignKeys && !/^\s*PRAGMA\s+foreign_keys/i.test(stmt)) {
+      pipelineReqs.push({ type: 'execute', stmt: { sql: 'PRAGMA foreign_keys = OFF' } });
+    }
+    pipelineReqs.push({ type: 'execute', stmt: { sql: stmt } });
+    pipelineReqs.push({ type: 'close' });
+
+    const results = await (db as any).executePipeline(pipelineReqs, 60000);
+    const execIndex = pipelineReqs.length - 2;
+    const first = results[execIndex];
+    if (first && (first.type === 'error' || first.error)) {
+      const errMsg = first.error?.message || 'Error';
+      if (isIdempotentSchemaError(errMsg.toLowerCase(), stmt.toUpperCase())) {
+        console.warn(`[Migrations] Tolerating idempotent schema state on statement ${stmtIndex + 1}: ${errMsg}`);
+        return;
+      }
+      throw new Error(`[Database D1] Exec error on statement ${stmtIndex + 1}: ${errMsg}\nSQL: ${stmt}`);
+    }
+    return;
+  }
+
+  await db.prepare(stmt).run();
+}
+
+async function execStatementsIndividually(
+  db: D1Database | TursoD1Database,
+  stmts: string[],
+  tempTableNames: Set<string>
+): Promise<void> {
+  let disableForeignKeys = false;
+  for (let i = 0; i < stmts.length; i++) {
+    const stmt = stmts[i].trim();
+    if (!stmt) continue;
+
+    if (/^\s*PRAGMA\s+foreign_keys\s*=\s*(off|0|false)\s*$/i.test(stmt)) {
+      disableForeignKeys = true;
+    } else if (/^\s*PRAGMA\s+foreign_keys\s*=\s*(on|1|true)\s*$/i.test(stmt)) {
+      disableForeignKeys = false;
+    }
+
+    try {
+      await runSingleMigrationStmt(db, stmt, i, disableForeignKeys);
+    } catch (err: any) {
+      const msg = (err?.message || '').toLowerCase();
+      const stmtUpper = stmt.toUpperCase();
+      const createsTempRebuildTable = Array.from(tempTableNames).some((name) =>
+        new RegExp(`^CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?["'\`]?${name}["'\`]?\\b`, 'i').test(stmt)
+      );
+
+      if (!createsTempRebuildTable && isIdempotentSchemaError(msg, stmtUpper)) {
+        console.warn(`[Migrations] Tolerating idempotent schema state on statement ${i + 1}: ${err.message}`);
+        continue;
+      }
+
+      // TursoDB (Limbo) does not yet support `WITHOUT ROWID`; strip and retry cleanly
+      const fallbackStmt = stripWithoutRowidClause(stmt);
+      if (fallbackStmt && (msg.includes('without rowid') || msg.includes('parse error') || msg.includes('syntax error') || msg.includes('not supported'))) {
+        console.warn(`[Migrations] Engine rejected WITHOUT ROWID on statement ${i + 1}; retrying as standard rowid table.`);
+        await runSingleMigrationStmt(db, fallbackStmt, i, disableForeignKeys);
+        continue;
+      }
+
+      throw err;
+    }
+  }
+}
+
 /**
- * Executes a migration SQL script statement-by-statement, tolerating idempotent schema states
- * (such as duplicate column names or tables/indexes that already exist).
+ * Executes a migration SQL script, batching statements over Turso's Hrana pipeline
+ * so PRAGMA state (such as `PRAGMA foreign_keys=off`) persists across table rebuilds
+ * and Worker subrequest limits are respected, with automatic recovery for interrupted rebuilds
+ * and fallback for `WITHOUT ROWID` / idempotent schema states.
  *
  * @param db - D1Database or TursoD1Database instance.
  * @param sql - Migration script containing one or more SQL statements.
  */
 export async function execMigrationSql(db: D1Database | TursoD1Database, sql: string): Promise<void> {
-  const stmts = splitSqlStatements(sql);
+  const stmts = splitSqlStatements(sql).map((s) => s.trim()).filter(Boolean);
   if (stmts.length === 0) return;
 
-  for (let i = 0; i < stmts.length; i++) {
-    const stmt = stmts[i].trim();
-    if (!stmt) continue;
+  const rebuildPairs = extractTableRebuildPairs(stmts);
+  const tempTableNames = new Set(rebuildPairs.map((p) => p.tempTable));
 
-    try {
-      if ('executePipeline' in db && typeof (db as any).executePipeline === 'function') {
-        const results = await (db as any).executePipeline([
-          {
-            type: 'execute',
-            stmt: { sql: stmt }
-          },
-          { type: 'close' }
-        ], 60000);
+  const runOnce = async (): Promise<void> => {
+    if ('executePipeline' in db && typeof (db as any).executePipeline === 'function') {
+      const requests: Array<{ type: 'execute'; stmt: { sql: string } } | { type: 'close' }> = [
+        ...stmts.map((s) => ({ type: 'execute' as const, stmt: { sql: s } })),
+        { type: 'close' as const }
+      ];
+      const results = await (db as any).executePipeline(requests, 60000);
+      const errStepIndex = results.findIndex((r: any) => r && (r.type === 'error' || r.error));
+      if (errStepIndex === -1) {
+        return;
+      }
 
-        const first = results[0];
-        if (first && (first.type === 'error' || first.error)) {
-          const msg = (first.error?.message || '').toLowerCase();
-          const stmtUpper = stmt.toUpperCase();
-          const isDuplicateColumn = msg.includes('duplicate column name') && stmtUpper.startsWith('ALTER TABLE');
-          const isAlreadyExists = msg.includes('already exists') && (stmtUpper.startsWith('CREATE') || stmtUpper.startsWith('ALTER'));
+      const errStep = results[errStepIndex];
+      const errMsg = errStep?.error?.message || 'Pipeline error';
+      const errMsgLower = errMsg.toLowerCase();
 
-          if (isDuplicateColumn || isAlreadyExists) {
-            console.warn(`[Migrations] Tolerating idempotent schema state on statement ${i + 1}: ${first.error?.message}`);
-            continue;
-          }
-
-          throw new Error(`[Database D1] Exec error on statement ${i + 1}: ${first.error?.message || 'Error'}\nSQL: ${stmt}`);
+      // If any statement failed due to unsupported WITHOUT ROWID, strip it across all statements and retry pipeline
+      if (
+        (errMsgLower.includes('without rowid') || errMsgLower.includes('parse error') || errMsgLower.includes('syntax error') || errMsgLower.includes('not supported')) &&
+        stmts.some((s) => stripWithoutRowidClause(s) !== null)
+      ) {
+        const stripped = stmts.map((s) => stripWithoutRowidClause(s) || s);
+        const retryReqs = [
+          ...stripped.map((s) => ({ type: 'execute' as const, stmt: { sql: s } })),
+          { type: 'close' as const }
+        ];
+        const retryResults = await (db as any).executePipeline(retryReqs, 60000);
+        const retryErr = retryResults.find((r: any) => r && (r.type === 'error' || r.error));
+        if (!retryErr) {
+          return;
         }
-      } else {
-        await db.prepare(stmt).run();
       }
-    } catch (err: any) {
-      const msg = (err?.message || '').toLowerCase();
-      const stmtUpper = stmt.toUpperCase();
-      const isDuplicateColumn = msg.includes('duplicate column name') && stmtUpper.startsWith('ALTER TABLE');
-      const isAlreadyExists = msg.includes('already exists') && (stmtUpper.startsWith('CREATE') || stmtUpper.startsWith('ALTER'));
 
-      if (isDuplicateColumn || isAlreadyExists) {
-        console.warn(`[Migrations] Tolerating idempotent schema state on statement ${i + 1}: ${err.message}`);
-        continue;
-      }
-      throw err;
+      // Fall back to statement-by-statement execution (carrying PRAGMA foreign_keys state)
+      await execStatementsIndividually(db, stmts, tempTableNames);
+      return;
     }
+
+    await execStatementsIndividually(db, stmts, tempTableNames);
+  };
+
+  try {
+    await runOnce();
+  } catch (err: any) {
+    const msg = (err?.message || '').toLowerCase();
+    if (
+      rebuildPairs.length > 0 &&
+      (msg.includes('already exists') || msg.includes('unique constraint') || msg.includes('no such table'))
+    ) {
+      const didRecover = await recoverInterruptedTableRebuilds(db, rebuildPairs);
+      if (didRecover) {
+        await runOnce();
+        return;
+      }
+    }
+    throw err;
   }
 }
 
@@ -227,18 +367,25 @@ export async function getTursoMigrationStats(
   }
 }
 
+export interface RunMigrationsOptions {
+  /** Optional cap on how many pending migration files to apply in a single invocation (avoids Worker subrequest limits). */
+  maxMigrations?: number;
+}
+
 /**
- * Runs all pending migrations against the database.
+ * Runs pending migrations against the database.
  * If migrationsOrDir is omitted, uses the compiled EMBEDDED_MIGRATIONS map,
  * allowing safe execution in serverless runtimes (Cloudflare Workers) without filesystem access.
  *
  * @param db - D1Database or TursoD1Database instance.
  * @param migrationsOrDir - Optional directory path or custom Record<string, string> migration map.
+ * @param options - Optional execution limits (e.g. maxMigrations for Worker HTTP requests).
  * @returns Number of newly applied migrations.
  */
 export async function runTursoMigrations(
   db: D1Database | TursoD1Database,
-  migrationsOrDir?: string | Record<string, string>
+  migrationsOrDir?: string | Record<string, string>,
+  options?: RunMigrationsOptions
 ): Promise<number> {
   await ensureTursoMigrationsTable(db);
 
@@ -247,10 +394,12 @@ export async function runTursoMigrations(
 
   const appliedQuery = await db.prepare('SELECT name FROM d1_migrations').all<{ name: string }>();
   const appliedSet = new Set((appliedQuery.results || []).map((r) => r.name));
+  const maxMigrations = options?.maxMigrations && options.maxMigrations > 0 ? options.maxMigrations : Infinity;
 
   let appliedCount = 0;
   for (const file of files) {
     if (appliedSet.has(file)) continue;
+    if (appliedCount >= maxMigrations) break;
 
     const sql = migrationsMap[file];
     if (!sql || !sql.trim()) continue;

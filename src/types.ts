@@ -1,7 +1,9 @@
 import { D1Database, ExecutionContext as CFExecutionContext } from "@cloudflare/workers-types";
+import type { AccessKeyDoNamespace } from "./lib/accessKeyRegistry";
 
 export interface Env {
   DB: D1Database;
+  ACCESS_KEY_DO?: AccessKeyDoNamespace;
   ASSETS: any;
   JWT_SECRET?: string;
   MAX_ACCESS_POINTS_PER_PROFILE?: string | number;
@@ -9,6 +11,8 @@ export interface Env {
   MAX_USERS?: string | number;
   DEFAULT_SESSION_EXPIRATION_MINUTES?: string | number;
   OPTIONAL_SESSION_EXPIRATION_DAYS?: string | number;
+  SESSION_ABSOLUTE_MAX_MINUTES?: string | number;
+  OPTIONAL_SESSION_ABSOLUTE_MAX_DAYS?: string | number;
   ACCESS_TOKEN_EXPIRATION_MINUTES?: string | number;
   SESSION_GEO_DISTANCE_KM?: string | number;
   PREAUTH_TTL_SECONDS?: string | number;
@@ -68,7 +72,6 @@ export interface User {
   totp_skip_password?: number; // 0 | 1 — when 1, login skips password check
   passkeys_count?: number;
   created_at?: number;
-  last_active_at?: number;
   last_resolve_at?: number;
   timezone?: string | null;
   locale?: string | null;
@@ -89,6 +92,25 @@ export interface UserActivityLog {
   extra: string | null;
 }
 
+export interface TtlOverrideRule {
+  enabled: boolean;
+  ttl: number;
+}
+
+export interface TtlOverrideSettings {
+  pass?: TtlOverrideRule;
+  redirect?: TtlOverrideRule;
+  block?: TtlOverrideRule;
+}
+
+export interface PauseFilteringSettings {
+  enabled: boolean;
+  /** Duration in seconds configured for the pause timer (0 = indefinite until manually re-enabled). */
+  duration_seconds: number;
+  /** Unix timestamp in seconds when the pause expires (0 = no automatic expiry). */
+  expires_at: number;
+}
+
 export interface ProfileSettings {
   upstream: string[];
   ecs: {
@@ -107,6 +129,8 @@ export interface ProfileSettings {
     enabled: boolean;
     fronting_domain?: string;
   };
+  ttl_override?: TtlOverrideSettings;
+  pause_filtering?: PauseFilteringSettings;
 }
 
 export interface Profile {
@@ -119,6 +143,8 @@ export interface Profile {
   updated_at: number;
   list_bloom?: string;
   list_updated_at?: number;
+  /** True when synthesized by fail-open recovery after a DB lookup failure. */
+  isEmergencyFallback?: boolean;
 }
 
 export interface Rule {
@@ -134,6 +160,20 @@ export interface Rule {
   include_subdomains?: boolean | number;
 }
 
+export interface ListMetadataStats {
+  total_rules: number;
+  exact_rules: number;
+  subdomain_rules: number;
+  wildcard_rules: number;
+  regex_rules: number;
+  exception_rules: number;
+  rewrite_rules: number;
+  comment_lines: number;
+  unsupported_lines: number;
+  total_bytes?: number;
+  truncated?: boolean;
+}
+
 export interface List {
   id: number;
   profile_id: string;
@@ -146,6 +186,7 @@ export interface List {
   sync_error?: string | null;
   etag?: string | null;
   last_modified?: number | null;
+  metadata?: ListMetadataStats | null;
 }
 
 export interface UserList {
@@ -244,6 +285,8 @@ export interface Context {
   startTime: number;
   env: Env;
   ctx: ExecutionContext;
+  /** True when profile lookup fell back to emergency fail-open mode due to DB unavailability. */
+  isEmergencyFallback?: boolean;
 }
 
 export interface AccessPoint {

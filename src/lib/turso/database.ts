@@ -18,7 +18,7 @@ import {
   toHranaValue,
   fromHranaValue
 } from './protocol';
-import { normalizeTursoUrl } from './config';
+import { normalizeTursoUrl, isTursoQuotaError } from './config';
 import { splitSqlStatements } from './sql';
 import { TursoD1PreparedStatement } from './statement';
 
@@ -31,6 +31,9 @@ export class TursoD1Database implements D1Database {
   public readonly endpoint: string;
   private selectCache = new Map<string, { result: HranaExecuteResult; expiresAt: number }>();
   private readonly maxSelectCacheEntries = 300;
+  private readQuotaBlockedUntil = 0;
+  private readQuotaBlockedMessage = '';
+  private readonly readQuotaCooldownMs = 60_000;
 
   constructor(url: string, authToken: string) {
     this.url = url;
@@ -54,40 +57,76 @@ export class TursoD1Database implements D1Database {
     return new TursoD1PreparedStatement(this, query) as unknown as D1PreparedStatement;
   }
 
+  private isTransientHttpStatus(status: number): boolean {
+    return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+  }
+
+  private isTransientSqliteBusy(code?: string, message?: string): boolean {
+    const combined = `${code || ''} ${message || ''}`.toLowerCase();
+    return combined.includes('sqlite_busy') || combined.includes('database is locked');
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
   /**
    * Executes a pipeline request against Turso HTTP API.
+   * Retries transient network/edge errors (408/429/5xx) with short backoff.
    *
    * @param requests - Array of Hrana operations to evaluate.
    * @param timeoutMs - Optional execution timeout in milliseconds (default 20,000ms).
    * @returns Array of step results.
    */
   async executePipeline(requests: HranaRequest[], timeoutMs = 20000): Promise<HranaStepResult[]> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-      controller.abort(new Error(`[Turso D1] Pipeline request timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+    const maxRetries = 2;
+    const retryDelaysMs = [150, 350];
 
-    try {
-      const res = await fetch(this.endpoint, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.authToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ requests }),
-        signal: controller.signal
-      });
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort(new Error(`[Turso D1] Pipeline request timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
 
-      if (!res.ok) {
-        const errorBody = await res.text().catch(() => '');
-        throw new Error(`[Turso D1] HTTP ${res.status} ${res.statusText}: ${errorBody}`);
+      try {
+        const res = await fetch(this.endpoint, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.authToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ requests }),
+          signal: controller.signal
+        });
+
+        if (!res.ok) {
+          const errorBody = await res.text().catch(() => '');
+          const err = new Error(`[Turso D1] HTTP ${res.status} ${res.statusText}: ${errorBody}`);
+          if (attempt < maxRetries && this.isTransientHttpStatus(res.status)) {
+            await this.sleep(retryDelaysMs[attempt]);
+            continue;
+          }
+          throw err;
+        }
+
+        const json = (await res.json()) as HranaPipelineResponse;
+        return json.results || [];
+      } catch (err: unknown) {
+        if (attempt < maxRetries && !controller.signal.aborted) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // Do not retry non-transient HTTP 4xx errors already formatted above
+          if (!msg.startsWith('[Turso D1] HTTP ')) {
+            await this.sleep(retryDelaysMs[attempt]);
+            continue;
+          }
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
       }
-
-      const json = (await res.json()) as HranaPipelineResponse;
-      return json.results || [];
-    } finally {
-      clearTimeout(timeoutId);
     }
+
+    throw new Error('[Turso D1] Pipeline execution failed after retries');
   }
 
   /**
@@ -107,12 +146,20 @@ export class TursoD1Database implements D1Database {
       if (cached && cached.expiresAt > Date.now()) {
         return cached.result;
       }
+      if (Date.now() < this.readQuotaBlockedUntil) {
+        throw new Error(`[Turso D1] Query error: ${this.readQuotaBlockedMessage}\nSQL: ${sql}`);
+      }
     } else {
       this.clearSelectCache();
     }
 
     const hranaArgs = params.map(toHranaValue);
-    const results = await this.executePipeline([
+    const needsFkOn = !isReadOnly && !/^\s*PRAGMA\s+foreign_keys/i.test(sql);
+    const pipelineReqs: HranaRequest[] = [];
+    if (needsFkOn) {
+      pipelineReqs.push({ type: 'execute', stmt: { sql: 'PRAGMA foreign_keys = ON' } });
+    }
+    pipelineReqs.push(
       {
         type: 'execute',
         stmt: {
@@ -121,18 +168,50 @@ export class TursoD1Database implements D1Database {
         }
       },
       { type: 'close' }
-    ]);
+    );
+    const maxBusyRetries = 2;
+    const busyDelaysMs = [150, 350];
+    let first: HranaStepResult | undefined;
 
-    const first = results[0];
-    if (!first) {
-      throw new Error(`[Turso D1] Empty response from pipeline for SQL: ${sql}`);
-    }
-    if (first.type === 'error' || first.error) {
-      const msg = first.error?.message || 'Unknown database error';
-      throw new Error(`[Turso D1] Query error: ${msg}\nSQL: ${sql}`);
+    for (let attempt = 0; attempt <= maxBusyRetries; attempt++) {
+      let results: HranaStepResult[];
+      try {
+        results = await this.executePipeline(pipelineReqs);
+      } catch (pipelineErr: unknown) {
+        const errMsg = pipelineErr instanceof Error ? pipelineErr.message : String(pipelineErr);
+        if (isReadOnly && isTursoQuotaError(errMsg)) {
+          this.readQuotaBlockedUntil = Date.now() + this.readQuotaCooldownMs;
+          this.readQuotaBlockedMessage = errMsg;
+        }
+        throw pipelineErr;
+      }
+      first = results[needsFkOn ? 1 : 0];
+      if (!first) {
+        throw new Error(`[Turso D1] Empty response from pipeline for SQL: ${sql}`);
+      }
+      if (first.type === 'error' || first.error) {
+        if (
+          attempt < maxBusyRetries &&
+          this.isTransientSqliteBusy(first.error?.code, first.error?.message)
+        ) {
+          await this.sleep(busyDelaysMs[attempt]);
+          continue;
+        }
+        const msg = first.error?.message || 'Unknown database error';
+        if (isReadOnly && (first.error?.code === 'BLOCKED' || isTursoQuotaError(msg))) {
+          this.readQuotaBlockedUntil = Date.now() + this.readQuotaCooldownMs;
+          this.readQuotaBlockedMessage = msg;
+        }
+        throw new Error(`[Turso D1] Query error: ${msg}\nSQL: ${sql}`);
+      }
+      if (isReadOnly && this.readQuotaBlockedUntil > 0) {
+        this.readQuotaBlockedUntil = 0;
+        this.readQuotaBlockedMessage = '';
+      }
+      break;
     }
 
-    const result = first.response?.result ?? {
+    const result = first!.response?.result ?? {
       cols: [],
       rows: [],
       affected_row_count: 0,
@@ -163,6 +242,7 @@ export class TursoD1Database implements D1Database {
     const start = Date.now();
 
     const requests: HranaRequest[] = [
+      { type: 'execute', stmt: { sql: 'PRAGMA foreign_keys = ON' } },
       { type: 'execute', stmt: { sql: 'BEGIN IMMEDIATE' } }
     ];
 
@@ -182,36 +262,57 @@ export class TursoD1Database implements D1Database {
       { type: 'close' }
     );
 
-    const stepResults = await this.executePipeline(requests);
+    const maxBusyRetries = 2;
+    const busyDelaysMs = [150, 350];
+    let stepResults: HranaStepResult[] = [];
 
-    // Check if any step failed
-    for (let i = 0; i < stepResults.length; i++) {
-      const step = stepResults[i];
-      if (step.type === 'error' || step.error) {
-        // Best-effort rollback
-        try {
-          await this.executePipeline([
-            { type: 'execute', stmt: { sql: 'ROLLBACK' } },
-            { type: 'close' }
-          ]);
-        } catch {
-          // Ignore rollback failure
+    for (let attempt = 0; attempt <= maxBusyRetries; attempt++) {
+      stepResults = await this.executePipeline(requests);
+      let shouldRetryBusy = false;
+
+      // Check if any step failed
+      for (let i = 0; i < stepResults.length; i++) {
+        const step = stepResults[i];
+        if (step.type === 'error' || step.error) {
+          // Best-effort rollback
+          try {
+            await this.executePipeline([
+              { type: 'execute', stmt: { sql: 'ROLLBACK' } },
+              { type: 'close' }
+            ]);
+          } catch {
+            // Ignore rollback failure
+          }
+
+          if (
+            attempt < maxBusyRetries &&
+            this.isTransientSqliteBusy(step.error?.code, step.error?.message)
+          ) {
+            shouldRetryBusy = true;
+            await this.sleep(busyDelaysMs[attempt]);
+            break;
+          }
+
+          const sqlIndex = i - 2;
+          const failedSql =
+            sqlIndex >= 0 && sqlIndex < statements.length
+              ? (statements[sqlIndex] as unknown as TursoD1PreparedStatement).sql
+              : 'TRANSACTION';
+          throw new Error(
+            `[Turso D1] Batch statement ${i} failed: ${step.error?.message || 'Error'}\nSQL: ${failedSql}`
+          );
         }
-        const sqlIndex = i - 1;
-        const failedSql =
-          sqlIndex >= 0 && sqlIndex < statements.length
-            ? (statements[sqlIndex] as unknown as TursoD1PreparedStatement).sql
-            : 'TRANSACTION';
-        throw new Error(
-          `[Turso D1] Batch statement ${i} failed: ${step.error?.message || 'Error'}\nSQL: ${failedSql}`
-        );
+      }
+
+      if (!shouldRetryBusy) {
+        break;
       }
     }
 
-    // Extract statement execution results (indices 1 to statements.length)
+    // Extract statement execution results (indices 2 to statements.length + 1)
     const results: D1Result<T>[] = [];
     for (let i = 0; i < statements.length; i++) {
-      const step = stepResults[i + 1];
+      const step = stepResults[i + 2];
       const execResult = step.response?.result ?? {
         cols: [],
         rows: [],

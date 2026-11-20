@@ -8,6 +8,14 @@ import { resolveClientGeoCountry } from "../../utils/geoip";
 import { pipeline } from "../../pipeline";
 import { PROFILE_NAME_REGEX } from "../../utils/validator";
 import { getDefaultUpstreamUrl } from "../../constants/presets";
+import { profileKeyMemoryMap } from "../../pipeline/cache";
+import { cacheUtils } from "../../utils/cache";
+import {
+  collectProfileAccessKeys,
+  deleteAccessKeysInDo,
+  syncProfileKeysToDo,
+  syncSingleKeyFromDbToDo
+} from "../../lib/accessKeyRegistry";
 
 /**
  * Handle requests to /api/profiles (without specific profile ID)
@@ -16,7 +24,8 @@ export async function handleProfilesCoreCollectionRequest(
   request: Request,
   env: Env,
   user: User,
-  pathParts: string[]
+  pathParts: string[],
+  ctx?: ExecutionContext
 ): Promise<Response> {
   const profileModel = new ProfileModel(env.DB);
 
@@ -66,6 +75,12 @@ export async function handleProfilesCoreCollectionRequest(
       best_effort_ech: { enabled: false, fronting_domain: "cloudflare-ech.com" }
     };
     await profileModel.create({ id: newId, owner_id: user.id, name: body.name || "Unnamed Profile", settings: defaultSettings });
+
+    if (ctx) {
+      ctx.waitUntil(syncProfileKeysToDo(env.DB, env, newId));
+    } else {
+      await syncProfileKeysToDo(env.DB, env, newId);
+    }
 
     // Automatically inherit active account-level E2EE keys if configured
     try {
@@ -128,7 +143,19 @@ export async function handleProfilesCoreRequest(
   // - GET /api/profiles/:id
   if (pathParts.length === 3) {
     if (request.method === 'DELETE') {
+      const keysToRevoke = await collectProfileAccessKeys(env.DB, profileId);
       await profileModel.delete(profileId);
+      if (keysToRevoke.length > 0) {
+        ctx.waitUntil(deleteAccessKeysInDo(env, keysToRevoke));
+      }
+      if (profile.profile_key) {
+        profileKeyMemoryMap.delete(profile.profile_key);
+        const cache = typeof caches !== 'undefined' ? (caches as any).default : null;
+        if (cache) {
+          ctx.waitUntil(cacheUtils.delete(cache, `doh_key_v1:${profile.profile_key}`));
+        }
+      }
+      ctx.waitUntil(pipeline.clearCache(profileId, true, env));
       return new Response(null, { status: 204 });
     }
 
@@ -153,6 +180,15 @@ export async function handleProfilesCoreRequest(
   if (pathParts[3] === 'rotate_key' && request.method === 'POST') {
     const newKey = generateId(12);
     await profileModel.rotateKey(profileId, newKey);
+    if (profile.profile_key) {
+      profileKeyMemoryMap.delete(profile.profile_key);
+      const cache = typeof caches !== 'undefined' ? (caches as any).default : null;
+      if (cache) {
+        ctx.waitUntil(cacheUtils.delete(cache, `doh_key_v1:${profile.profile_key}`));
+      }
+      ctx.waitUntil(syncSingleKeyFromDbToDo(env.DB, env, profile.profile_key));
+    }
+    ctx.waitUntil(syncProfileKeysToDo(env.DB, env, profileId));
     ctx.waitUntil(pipeline.clearCache(profileId, false, env));
     return new Response(JSON.stringify({ profile_key: newKey }), { headers: { 'Content-Type': 'application/json' } });
   }
@@ -202,15 +238,71 @@ export async function handleProfilesCoreRequest(
       }
     }
 
-    // 检查旧配置中的 log_retention_days
+    if (newSettings.ttl_override !== undefined) {
+      if (!newSettings.ttl_override || typeof newSettings.ttl_override !== 'object' || Array.isArray(newSettings.ttl_override)) {
+        return new Response("Invalid ttl_override configuration.", { status: 400 });
+      }
+      const ttlKeys: Array<keyof NonNullable<ProfileSettings['ttl_override']>> = ['pass', 'redirect', 'block'];
+      for (const key of ttlKeys) {
+        const entry = newSettings.ttl_override[key];
+        if (entry === undefined) continue;
+        if (!entry || typeof entry !== 'object' || typeof entry.enabled !== 'boolean') {
+          return new Response(`Invalid ttl_override.${key} configuration.`, { status: 400 });
+        }
+        const ttlNum = Number(entry.ttl);
+        if (!Number.isInteger(ttlNum) || ttlNum < 0 || ttlNum > 2147483647) {
+          return new Response(`Invalid ttl_override.${key}.ttl value. Must be an integer between 0 and 2147483647.`, { status: 400 });
+        }
+        entry.ttl = ttlNum;
+      }
+    }
+
+    // 检查旧配置中的 log_retention_days 与 pause_filtering
     const oldProfile = await profileModel.getById(profileId);
     let oldDays = 30;
+    let oldPause: ProfileSettings['pause_filtering'] | undefined;
     try {
       const oldSettings = JSON.parse(oldProfile?.settings || "{}");
       if (oldSettings?.log_retention_days != null) {
         oldDays = Number(oldSettings.log_retention_days);
       }
+      oldPause = oldSettings?.pause_filtering;
     } catch {}
+
+    if (newSettings.pause_filtering !== undefined) {
+      const pause = newSettings.pause_filtering;
+      if (!pause || typeof pause !== 'object' || Array.isArray(pause) || typeof pause.enabled !== 'boolean') {
+        return new Response("Invalid pause_filtering configuration.", { status: 400 });
+      }
+      const durationSec = Number(pause.duration_seconds);
+      if (!Number.isInteger(durationSec) || durationSec < 0 || durationSec > 360000) {
+        return new Response("Invalid pause_filtering.duration_seconds value. Must be an integer between 0 and 360000.", { status: 400 });
+      }
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (!pause.enabled) {
+        newSettings.pause_filtering = {
+          enabled: false,
+          duration_seconds: durationSec,
+          expires_at: 0
+        };
+      } else if (durationSec === 0) {
+        newSettings.pause_filtering = {
+          enabled: true,
+          duration_seconds: 0,
+          expires_at: 0
+        };
+      } else {
+        const wasActiveSameDuration =
+          Boolean(oldPause?.enabled) &&
+          oldPause?.duration_seconds === durationSec &&
+          Number(oldPause?.expires_at || 0) > nowSec;
+        newSettings.pause_filtering = {
+          enabled: true,
+          duration_seconds: durationSec,
+          expires_at: wasActiveSameDuration ? Number(oldPause!.expires_at) : nowSec + durationSec
+        };
+      }
+    }
 
     await profileModel.updateSettings(profileId, newSettings);
 
@@ -243,7 +335,17 @@ export async function handleProfilesCoreRequest(
 
   // POST /api/profiles/:id/test
   if (pathParts[3] === 'test' && request.method === 'POST') {
-    const { domain, type } = await request.json() as { domain: string, type: string };
+    let body: { domain?: unknown; type?: unknown };
+    try {
+      body = await request.json() as { domain?: unknown; type?: unknown };
+    } catch {
+      return new Response("Invalid JSON payload", { status: 400 });
+    }
+    const domain = typeof body?.domain === 'string' ? body.domain.trim() : '';
+    const type = typeof body?.type === 'string' && body.type.trim() ? body.type.trim().toUpperCase() : 'A';
+    if (!domain || domain.length > 253) {
+      return new Response("Invalid or missing domain parameter", { status: 400 });
+    }
     const rawQuery = buildDNSQuery(domain, type);
     const result = await pipeline.process(request, { name: domain, type, raw: rawQuery }, { profileId, startTime: Date.now(), env, ctx });
     return new Response(JSON.stringify({

@@ -18,6 +18,7 @@ import { cacheUtils } from "../../utils/cache";
 import { PASSWORD_REGEX, USERNAME_REGEX } from "../../utils/validator";
 import { verifyTurnstile } from "./utils";
 import { getDefaultUpstreamUrl } from "../../constants/presets";
+import { syncProfileKeysToDo } from "../../lib/accessKeyRegistry";
 
 /**
  * Handle user registration requests (signup)
@@ -62,8 +63,12 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
     }
   }
 
-  if (enabled === 'true' && secretKey) {
-    if (!await verifyTurnstile(turnstileToken, secretKey, clientIp)) {
+  const effectiveSecret = secretKey || env.TURNSTILE_SECRET_KEY || '';
+  if (enabled === 'true') {
+    if (!effectiveSecret) {
+      return new Response("Turnstile verification is enabled but secret key is not configured", { status: 503 });
+    }
+    if (!await verifyTurnstile(turnstileToken, effectiveSecret, clientIp)) {
       return new Response("Verification failed", { status: 400 });
     }
   }
@@ -108,7 +113,16 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
 
   let userCreated = false;
   try {
-    await userModel.create({ id: userId, username, passwordHash: hashedPassword, role, timezone, passwordVersion: 2 });
+    const createStatus = await userModel.createAtomic(
+      { id: userId, username, passwordHash: hashedPassword, role, timezone, passwordVersion: 2 },
+      isDbEmpty ? 0 : maxUsers
+    );
+    if (createStatus === "admin_exists") {
+      return new Response("registration_disabled", { status: 403 });
+    }
+    if (createStatus === "max_users_reached") {
+      return new Response("max_users_reached", { status: 403 });
+    }
     userCreated = true;
 
     // Create default profile for the user
@@ -129,6 +143,7 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
         best_effort_ech: { enabled: false, fronting_domain: "cloudflare-ech.com" }
       }
     });
+    await syncProfileKeysToDo(env.DB, env, defaultProfileId);
 
     // Generate zero-knowledge Recovery Key; store ONLY irreversible hash in DB
     const recoveryKey = generateRecoveryKey();
@@ -165,6 +180,7 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
         console.error("Failed to clean up incomplete user registration:", cleanupErr);
       }
     }
-    return new Response(e.message, { status: 400 });
+    console.error("[Auth Register] Registration failed:", e?.message || e);
+    return new Response("Registration failed", { status: 400 });
   }
 }

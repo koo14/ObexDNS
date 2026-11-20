@@ -1,7 +1,7 @@
 import { Env, User, ExecutionContext } from "../../types";
 import { ListModel } from "../../models/list";
 import { ProfileModel } from "../../models/profile";
-import { syncNextListForProfile, syncAllListsForProfile, syncSingleListForProfile, rebuildProfileBloom } from "../../utils/sync";
+import { syncNextListForProfile, syncAllListsForProfile, syncSingleListForProfile, rebuildProfileBloom, getProfileSyncProgress } from "../../utils/sync";
 import { isSafeUrl } from "../../utils/validator";
 import { pipeline } from "../../pipeline";
 import { ListBloomModel } from "../../models/listBloom";
@@ -24,6 +24,12 @@ export async function handleProfileListsRequest(
   const profileModel = new ProfileModel(env.DB);
 
   if (request.method === 'GET') {
+    if (pathParts[4] === 'sync-status') {
+      return new Response(JSON.stringify(getProfileSyncProgress(profileId)), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
     // GET /api/profiles/:id/lists/:listId/check?domain=example.com
     //
     // Answers "does this list block this domain" straight from the list's own
@@ -199,6 +205,7 @@ export async function handleProfileListsRequest(
       });
     }
 
+    const MAX_PROFILE_LISTS = 50;
     const body = await request.json() as any;
 
     // Support bulk list addition when body is an array or contains lists/urls/filters/blocklists array
@@ -209,6 +216,9 @@ export async function handleProfileListsRequest(
     const isBulk = Array.isArray(candidateList);
     if (isBulk) {
       const rawList: any[] = candidateList;
+      if (rawList.length > MAX_PROFILE_LISTS) {
+        return new Response(`Bulk request exceeds maximum of ${MAX_PROFILE_LISTS} lists`, { status: 400 });
+      }
       const seen = new Set<string>();
       const validItems: { url: string; enabled: number }[] = [];
 
@@ -249,6 +259,10 @@ export async function handleProfileListsRequest(
       const existingUrls = new Set(existingLists.map(l => l.url.trim().toLowerCase()));
       const itemsToInsert = validItems.filter(item => !existingUrls.has(item.url.toLowerCase()));
 
+      if (existingLists.length + itemsToInsert.length > MAX_PROFILE_LISTS) {
+        return new Response(`Profile filter list limit (${MAX_PROFILE_LISTS}) exceeded`, { status: 400 });
+      }
+
       let insertedCount = 0;
       if (itemsToInsert.length > 0) {
         insertedCount = await listModel.addListsBulk(profileId, itemsToInsert);
@@ -268,6 +282,10 @@ export async function handleProfileListsRequest(
     }
     if (!isSafeUrl(listUrl)) {
       return new Response("Invalid list URL. Private networks and localhosts are not allowed.", { status: 400 });
+    }
+    const existingLists = (await listModel.getLists(profileId)).filter((l) => l.scope === 'profile');
+    if (existingLists.length >= MAX_PROFILE_LISTS) {
+      return new Response(`Profile filter list limit (${MAX_PROFILE_LISTS}) exceeded`, { status: 400 });
     }
     
     const insertResult = await listModel.addList(profileId, listUrl);

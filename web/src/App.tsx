@@ -19,6 +19,7 @@ import { DeploymentGuideView } from "./views/DeploymentGuideView";
 import { loadLocale } from "./i18n/config";
 
 import { AuthView } from "./components/AuthView";
+import { resolveTargetProfileSection } from "./utils/navigation";
 
 const AccountView = lazyWithPreload(() =>
   import("./views/AccountView").then((m) => ({ default: m.AccountView })),
@@ -79,10 +80,11 @@ function App() {
     );
   }
 
-  // Check for configuration errors (missing DB or JWT_SECRET)
+  // Check for configuration errors (missing DB / JWT_SECRET) or DB quota block
   const isDbMissing = (window as any).DNS_WORKER_CONFIG?.isDbMissing;
+  const isDbQuotaExceeded = (window as any).DNS_WORKER_CONFIG?.isDbQuotaExceeded;
   const isJwtSecretMissing = (window as any).DNS_WORKER_CONFIG?.isJwtSecretMissing;
-  if (isDbMissing || isJwtSecretMissing) {
+  if (isDbMissing || isJwtSecretMissing || isDbQuotaExceeded) {
     return <DeploymentGuideView />;
   }
 
@@ -136,26 +138,30 @@ function App() {
           <Route path="/" element={<Navigate to="/dash" replace />} />
           <Route
             path="/dash"
-            element={
-              <DashboardHomeView
-                profiles={profiles}
-                onSelect={(p: Profile) => {
-                  setSelectedProfile(p);
-                  navigate(`/dash/${p.id}/setup`);
-                }}
-                onCreate={handleCreateProfile}
-                showCreate={showCreateDialog}
-                setShowCreate={setShowCreateDialog}
-                newName={newProfileName}
-                setNewName={setNewProfileName}
-                error={createError}
-                onDelete={handleDeleteProfile}
-                handleLogout={handleLogout}
-                navigate={navigate}
-                onRefresh={fetchProfiles}
-                currentUser={currentUser}
-              />
-            }
+            element={(() => {
+              const targetSection = resolveTargetProfileSection(location.search);
+              return (
+                <DashboardHomeView
+                  profiles={profiles}
+                  targetSection={targetSection}
+                  onSelect={(p: Profile) => {
+                    setSelectedProfile(p);
+                    navigate(`/dash/${p.id}/${targetSection}`);
+                  }}
+                  onCreate={handleCreateProfile}
+                  showCreate={showCreateDialog}
+                  setShowCreate={setShowCreateDialog}
+                  newName={newProfileName}
+                  setNewName={setNewProfileName}
+                  error={createError}
+                  onDelete={handleDeleteProfile}
+                  handleLogout={handleLogout}
+                  navigate={navigate}
+                  onRefresh={fetchProfiles}
+                  currentUser={currentUser}
+                />
+              );
+            })()}
           />
           <Route
             path="/dash/:profileId/*"

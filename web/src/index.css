@@ -57,6 +57,20 @@
   .bp6-dark {
     color: #f5f8fa;
   }
+
+  .rsm-geography:focus {
+    outline: none;
+  }
+}
+
+/* 统一通过降低透明度柔和化 Placeholder（继承主题前景色，兼容亮/暗色与多主题及 Blueprint v6 覆盖） */
+input::placeholder,
+textarea::placeholder,
+.bp6-input::placeholder,
+.dark .bp6-input::placeholder,
+.bp6-dark .bp6-input::placeholder {
+  color: currentColor !important;
+  opacity: 0.42 !important;
 }
 
 /* 适配 Tailwind 的 dark 修饰符 */
@@ -73,6 +87,17 @@
 
 .animate-row-glow {
   animation: rowGlow 2.5s ease-out;
+}
+
+@keyframes boxGlow {
+  0% {
+    background-color: rgba(59, 130, 246, 0.25);
+    border-color: rgba(59, 130, 246, 0.6);
+  }
+}
+
+.animate-box-glow {
+  animation: boxGlow 2.5s ease-out;
 }
 
 /* 修复 Blueprint Callout 在使用非内置图标（如 Lucide SVG）时图标与标题未对齐的问题 */
