@@ -43,12 +43,12 @@ export interface DemoAccessPointSpec {
 
 /** Canonical demo Access Point devices across desktop, mobile, tablet, router, NAS, TV, and browser. */
 export const DEMO_ACCESS_POINT_SPECS: readonly DemoAccessPointSpec[] = [
-  { name: "MacBook-Pro", targetProfileRole: "primary" },
-  { name: "Windows-11-Desktop", targetProfileRole: "primary" },
-  { name: "iPhone-16-Pro", targetProfileRole: "primary" },
-  { name: "Pixel-9-Android", targetProfileRole: "primary" },
   { name: "OpenWrt-Router", targetProfileRole: "primary" },
-  { name: "Synology-NAS", targetProfileRole: "primary" },
+  { name: "MacBook-Pro", targetProfileRole: "primary" },
+  { name: "TrueNAS-NAS", targetProfileRole: "office" },
+  { name: "Windows-11-Desktop", targetProfileRole: "primary" },
+  { name: "iPhone-16", targetProfileRole: "primary" },
+  { name: "Pixel-9-Android", targetProfileRole: "primary" },
   { name: "Linux-Workstation", targetProfileRole: "office" },
   { name: "Chrome-Browser-Work", targetProfileRole: "office" },
   { name: "Kids-iPad", targetProfileRole: "kids" },
@@ -428,10 +428,10 @@ export interface DemoClientProfile {
 export const DEMO_CLIENT_POOL: readonly DemoClientProfile[] = [
   { apName: "MacBook-Pro", clientIp: "203.0.113.10", geoCountry: "JP" },
   { apName: "Windows-11-Desktop", clientIp: "203.0.113.18", geoCountry: "US" },
-  { apName: "iPhone-16-Pro", clientIp: "203.0.113.24", geoCountry: "JP" },
+  { apName: "iPhone-16", clientIp: "203.0.113.24", geoCountry: "JP" },
   { apName: "Pixel-9-Android", clientIp: "198.51.100.88", geoCountry: "SG" },
   { apName: "OpenWrt-Router", clientIp: "2001:db8::42", geoCountry: "US" },
-  { apName: "Synology-NAS", clientIp: "198.51.100.120", geoCountry: "DE" },
+  { apName: "TrueNAS-NAS", clientIp: "198.51.100.120", geoCountry: "DE" },
 ];
 
 export interface DemoClientInfoPayload extends DemoClientInfoDefaults {
@@ -551,4 +551,241 @@ export function getDemoResolvePayload(): { ipv4: string[]; ipv6: string[] } {
     ipv4: [...DEMO_SUBSTITUTE_IPS.ipv4],
     ipv6: [...DEMO_SUBSTITUTE_IPS.ipv6],
   };
+}
+
+export interface DemoAnalyticsQueryOptions {
+  profileId: string;
+  range: string | null;
+  since: number;
+  until: number;
+  accessPointId?: string;
+  demoDomain?: string;
+}
+
+export interface DemoAnalyticsResultPayload {
+  summary: { action: string; count: number }[];
+  trend: { timestamp: number; action: string; count: number }[];
+  top_allowed: { domain: string; count: number }[];
+  top_blocked: { domain: string; count: number }[];
+  clients: { client_ip: string; geo_country: string | null; count: number }[];
+  destinations: { country_code: string; country: string; count: number }[];
+}
+
+function hashSeedString(input: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function resolveDemoAnalyticsBucketSec(range: string | null): number {
+  switch (range) {
+    case "10m":
+    case "1h":
+      return 60;
+    case "7d":
+    case "30d":
+      return 86400;
+    case "24h":
+    case "custom":
+    default:
+      return range === null ? 60 : 3600;
+  }
+}
+
+function distributeByWeight<T>(items: readonly T[], total: number, weights: readonly number[]): number[] {
+  if (items.length === 0 || total <= 0) return items.map(() => 0);
+  const weightSum = weights.reduce((acc, w) => acc + w, 0) || items.length;
+  const counts = items.map((_, i) => Math.floor((total * (weights[i] ?? 1)) / weightSum));
+  let assigned = counts.reduce((acc, c) => acc + c, 0);
+  let idx = 0;
+  while (assigned < total) {
+    counts[idx % counts.length] += 1;
+    assigned += 1;
+    idx += 1;
+  }
+  return counts;
+}
+
+/**
+ * Dynamically generates continuous, mathematically consistent Demo Mode `/stats` analytics
+ * for any requested time range (`10m`, `1h`, `24h`, `7d`, `30d`, or arbitrary `custom` range),
+ * profile, or Access Point filter from the canonical `demoConfig` fixtures.
+ *
+ * @param options - Requested analytics window, profile, and optional device filter.
+ * @returns Complete dashboard analytics dataset matching `/api/profiles/:id/analytics`.
+ */
+export function buildDemoAnalyticsPayload(
+  options: DemoAnalyticsQueryOptions
+): DemoAnalyticsResultPayload {
+  const safeUntil = Number.isFinite(options.until) ? Math.floor(options.until) : Math.floor(Date.now() / 1000);
+  const safeSince = Number.isFinite(options.since)
+    ? Math.min(Math.floor(options.since), safeUntil)
+    : safeUntil - 3600;
+  const bucketSec = resolveDemoAnalyticsBucketSec(options.range);
+  const baseSeed = hashSeedString(`${options.profileId}|${options.accessPointId || "all"}`);
+  const apScale = options.accessPointId ? 0.3 : 1;
+
+  const startBucket = Math.floor(safeSince / bucketSec) * bucketSec;
+  const endBucket = Math.max(startBucket, Math.floor(safeUntil / bucketSec) * bucketSec);
+  const totalSpanBuckets = Math.floor((endBucket - startBucket) / bucketSec) + 1;
+  const maxRenderedBuckets = 744; // Up to 31 full days at hourly granularity
+  const stepMultiplier = totalSpanBuckets > maxRenderedBuckets ? Math.ceil(totalSpanBuckets / maxRenderedBuckets) : 1;
+  const effectiveStep = bucketSec * stepMultiplier;
+
+  const passScale = bucketSec >= 86400 ? 3200 : bucketSec >= 3600 ? 150 : 6;
+  const blockScale = bucketSec >= 86400 ? 950 : bucketSec >= 3600 ? 45 : 2;
+  const redirectScale = bucketSec >= 86400 ? 320 : bucketSec >= 3600 ? 15 : 1;
+
+  const trend: { timestamp: number; action: string; count: number }[] = [];
+  let totalPass = 0;
+  let totalBlock = 0;
+  let totalRedirect = 0;
+
+  for (let ts = startBucket, idx = 0; ts <= endBucket; ts += effectiveStep, idx++) {
+    const wave = 0.72 + 0.48 * (0.5 + 0.5 * Math.sin(idx * 0.55 + (baseSeed % 11)));
+    const jitter = ((hashSeedString(`${baseSeed}:${ts}`) % 37) - 18) / 100;
+    const factor = Math.max(0.35, (wave + jitter) * apScale * stepMultiplier);
+
+    const passCount = Math.max(2, Math.round(passScale * factor));
+    const blockCount = Math.max(1, Math.round(blockScale * factor));
+    const redirectCount = Math.max(idx % 3 === 0 ? 1 : 0, Math.round(redirectScale * factor * 0.85));
+
+    totalPass += passCount;
+    totalBlock += blockCount;
+    totalRedirect += redirectCount;
+
+    trend.push({ timestamp: ts, action: "PASS", count: passCount });
+    trend.push({ timestamp: ts, action: "BLOCK", count: blockCount });
+    if (redirectCount > 0) {
+      trend.push({ timestamp: ts, action: "REDIRECT", count: redirectCount });
+    }
+  }
+
+  const summary = [
+    { action: "PASS", count: totalPass },
+    { action: "BLOCK", count: totalBlock },
+    { action: "REDIRECT", count: totalRedirect },
+  ];
+
+  const passTemplates = DEMO_TRAFFIC_TEMPLATES.filter((t) => t.action === "PASS");
+  const blockTemplates = DEMO_TRAFFIC_TEMPLATES.filter((t) => t.action === "BLOCK");
+  const passWeights = passTemplates.map((_, i) => Math.max(2, passTemplates.length + 2 - i));
+  const blockWeights = blockTemplates.map((_, i) => Math.max(2, blockTemplates.length + 2 - i));
+
+  const passCounts = distributeByWeight(passTemplates, totalPass, passWeights);
+  const blockCounts = distributeByWeight(blockTemplates, totalBlock, blockWeights);
+
+  const demoDomain = options.demoDomain?.trim() || DEFAULT_DEMO_DOMAIN;
+  const top_allowed = passTemplates
+    .map((tpl, i) => ({
+      domain: tpl.domain.replace(DEFAULT_DEMO_DOMAIN, demoDomain),
+      count: passCounts[i] || 0,
+    }))
+    .filter((item) => item.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  const top_blocked = blockTemplates
+    .map((tpl, i) => ({
+      domain: tpl.domain.replace(DEFAULT_DEMO_DOMAIN, demoDomain),
+      count: blockCounts[i] || 0,
+    }))
+    .filter((item) => item.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  const totalQueries = totalPass + totalBlock + totalRedirect;
+  const clientPool = options.accessPointId
+    ? [DEMO_CLIENT_POOL[baseSeed % DEMO_CLIENT_POOL.length]]
+    : DEMO_CLIENT_POOL;
+  const clientWeights = clientPool.map((_, i) => Math.max(1, clientPool.length - i));
+  const clientCounts = distributeByWeight(clientPool, totalQueries, clientWeights);
+
+  const clients = clientPool
+    .map((client, i) => ({
+      client_ip: client.clientIp,
+      geo_country: client.geoCountry,
+      count: clientCounts[i] || 0,
+    }))
+    .filter((item) => item.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  const destAggregate = new Map<string, { country_code: string; country: string; count: number }>();
+  const geoTemplates = DEMO_TRAFFIC_TEMPLATES.filter((t) => Boolean(t.destCode));
+  const geoCounts = distributeByWeight(
+    geoTemplates,
+    totalPass + totalBlock,
+    geoTemplates.map((_, i) => Math.max(1, geoTemplates.length - i))
+  );
+  geoTemplates.forEach((tpl, i) => {
+    const c = geoCounts[i] || 0;
+    if (c <= 0) return;
+    const prev = destAggregate.get(tpl.destCode);
+    if (prev) {
+      prev.count += c;
+    } else {
+      destAggregate.set(tpl.destCode, {
+        country_code: tpl.destCode,
+        country: tpl.destCountry,
+        count: c,
+      });
+    }
+  });
+
+  const destinations = Array.from(destAggregate.values()).sort((a, b) => b.count - a.count);
+
+  return {
+    summary,
+    trend,
+    top_allowed,
+    top_blocked,
+    clients,
+    destinations,
+  };
+}
+
+/**
+ * Builds country-level ISP distribution for `/api/profiles/:id/analytics/isps` in Demo Mode.
+ *
+ * @param options - Country filter, analytics window, and optional device/limit parameters.
+ * @returns Array of ISP counts ordered descending.
+ */
+export function buildDemoAnalyticsIspsPayload(options: {
+  countryCode?: string;
+  profileId: string;
+  range: string | null;
+  since: number;
+  until: number;
+  accessPointId?: string;
+  limit?: number;
+}): { name: string; count: number }[] {
+  const analytics = buildDemoAnalyticsPayload(options);
+  const totalForCountry = options.countryCode
+    ? analytics.destinations.find((d) => d.country_code.toUpperCase() === options.countryCode!.toUpperCase())?.count ||
+      analytics.destinations[0]?.count ||
+      50
+    : analytics.summary.reduce((acc, s) => acc + s.count, 0);
+
+  const upperCode = options.countryCode?.trim().toUpperCase();
+  const matchingTemplates = DEMO_TRAFFIC_TEMPLATES.filter(
+    (t) => Boolean(t.destIsp) && (!upperCode || t.destCode.toUpperCase() === upperCode)
+  );
+  const ispSource =
+    matchingTemplates.length > 0
+      ? matchingTemplates
+      : DEMO_TRAFFIC_TEMPLATES.filter((t) => Boolean(t.destIsp));
+
+  const uniqueIsps = Array.from(new Set(ispSource.map((t) => t.destIsp)));
+  const weights = uniqueIsps.map((_, i) => Math.max(1, uniqueIsps.length - i));
+  const counts = distributeByWeight(uniqueIsps, totalForCountry, weights);
+  const cap = options.limit && options.limit > 0 ? options.limit : 20;
+
+  return uniqueIsps
+    .map((name, i) => ({ name, count: counts[i] || 0 }))
+    .filter((item) => item.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, cap);
 }
