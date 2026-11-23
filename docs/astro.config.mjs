@@ -471,6 +471,16 @@ export default defineConfig({
               },
               slug: 'advanced/security-auth',
             },
+            {
+              label: 'Compliance Statements',
+              translations: {
+                'zh-CN': '合规声明',
+                'zh-cn': '合规声明',
+                'zh-TW': '合規聲明',
+                'zh-tw': '合規聲明',
+              },
+              slug: 'advanced/compliance',
+            },
           ],
         },
         {

@@ -20,6 +20,7 @@ import {
   getDemoDomain,
   isDemoMode,
 } from "./demoConfig";
+import { ensureDemoPasskeysAndE2ee } from "./demoSecuritySeed";
 
 export { DEFAULT_DEMO_DOMAIN, isDemoMode, getDemoDomain };
 
@@ -342,6 +343,10 @@ export async function ensureDemoDataSeeded(env: Env, userId: string): Promise<vo
       const accessPoints = await ensureDemoAccessPoints(env, userId, profiles, apModel);
       const demoDomain = getDemoDomain(env);
 
+      const uniqueProfiles = [profiles.primary, profiles.office, profiles.kids].filter(
+        (p, idx, arr) => arr.findIndex((x) => x.id === p.id) === idx
+      );
+
       await Promise.all([
         ensureDemoRules(ruleModel, profiles.primary.id, DEMO_PRIMARY_RULES, demoDomain),
         profiles.kids.id !== profiles.primary.id
@@ -349,6 +354,7 @@ export async function ensureDemoDataSeeded(env: Env, userId: string): Promise<vo
           : Promise.resolve(),
         ensureDemoLists(env, listModel, profiles.primary.id),
         ensureDemoLogs(env, logModel, profiles.primary.id, accessPoints),
+        ensureDemoPasskeysAndE2ee(env, userId, uniqueProfiles),
       ]);
 
       seededUsersInIsolate.add(userId);
