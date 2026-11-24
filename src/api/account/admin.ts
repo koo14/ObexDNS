@@ -607,14 +607,14 @@ export async function handleAdminRequest(
           headers: jsonHeaders
         });
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (msg === 'restart_unsupported') {
+        if (e instanceof Error && e.message === 'restart_unsupported') {
           return new Response(JSON.stringify({ error: "restart_unsupported" }), {
             status: 400,
             headers: jsonHeaders
           });
         }
-        return new Response(JSON.stringify({ error: msg || "Failed to schedule restart" }), {
+        console.error("[Admin API] Failed to schedule service restart:", e);
+        return new Response(JSON.stringify({ error: "Failed to schedule restart" }), {
           status: 500,
           headers: jsonHeaders
         });
@@ -648,13 +648,13 @@ export async function handleAdminRequest(
             alpha: {
               channel: 'alpha',
               version: '1.3.5-alpha.demo001',
-              updateAvailable: true,
+              updateAvailable: false,
               updateCommand: 'docker pull hugokoo/dns-worker:alpha'
             },
             canary: {
               channel: 'canary',
               version: '1.3.5-canary.demo002',
-              updateAvailable: true,
+              updateAvailable: false,
               updateCommand: 'docker pull hugokoo/dns-worker:canary'
             }
           }

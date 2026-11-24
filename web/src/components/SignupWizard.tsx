@@ -66,6 +66,7 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
     requiresInviteCode,
     password,
     setPassword,
+    isPasswordlessSignup,
     mfaChoice,
     setMfaChoice,
     passkeyRegLoading,
@@ -93,7 +94,8 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
     handleSignupUsernameSubmit,
     handleSignupTotpConfirm,
     handleCopySignupRecoveryKeys,
-    handleSignupSubmit
+    handleSignupSubmit,
+    handleSkipPasswordSignup
   } = useSignupWizard({ authConfig, turnstileReady, onSuccess });
 
   const isMaxUsersReached = Boolean(authConfig?.max_users_reached);
@@ -115,11 +117,11 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
         <Callout
           intent={isMaxUsersReached ? Intent.DANGER : Intent.WARNING}
           icon={isMaxUsersReached ? "error" : "lock"}
-          title={isMaxUsersReached ? t("auth.maxUsersReachedTitle", "用户配额已满") : t("auth.registrationDisabledTitle", "注册已停用")}
+          title={isMaxUsersReached ? t("auth.maxUsersReachedTitle", "账号配额已满") : t("auth.registrationDisabledTitle", "注册已停用")}
         >
           {isMaxUsersReached
-            ? t("auth.maxUsersReachedDesc", "当前系统注册用户数已达到上限，暂不接受新用户注册。请联系系统管理员。")
-            : t("auth.registrationDisabledDesc", "当前系统已暂停开放新用户注册，请联系系统管理员获取账号。")}
+            ? t("auth.maxUsersReachedDesc", "当前系统注册账号数已达到上限，暂不接受新账号注册。请联系系统管理员。")
+            : t("auth.registrationDisabledDesc", "当前系统已暂停开放新账号注册，请联系系统管理员获取账号。")}
         </Callout>
         <div className="pt-4 border-t border-gray-100 dark:border-gray-800 flex justify-center items-center text-sm">
           <button
@@ -168,7 +170,7 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
             ? signupStep === "password"
               ? username
               : authConfig?.has_users === false
-              ? t("auth.registerAdminDesc", "系统尚无账号，首位注册用户将自动成为系统管理员。")
+              ? t("auth.registerAdminDesc", "系统尚无账号，首位注册账号将自动成为系统管理员。")
               : t("auth.protectInternet")
             : signupStep === "totp"
             ? t("auth.mfaSetupDesc", "任选一种认证方式即可完成配置，保障账号安全。")
@@ -212,6 +214,7 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
           setPasswordFocused={setPasswordFocused}
           loading={loading}
           onSubmit={handleSignupSubmit}
+          onSkipPassword={handleSkipPasswordSignup}
           isTurnstileEnabled={isTurnstileEnabled}
           turnstileRef={turnstileRef}
           turnstileStatus={turnstileStatus}
@@ -233,7 +236,9 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
           totpSetupError={totpSetupError}
           totpSetupLoading={totpSetupLoading}
           onTotpSubmit={handleSignupTotpConfirm}
+          requireMfa={isPasswordlessSignup}
           onSkip={() => {
+            if (isPasswordlessSignup) return;
             if (totpRecoveryKeys && totpRecoveryKeys.length > 0) {
               setSignupStep("recovery");
             } else {

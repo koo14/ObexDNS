@@ -9,6 +9,7 @@ import {
   Callout,
   Dialog,
   Spinner,
+  Switch,
   Tooltip,
   type OverlayToaster,
 } from "@blueprintjs/core";
@@ -44,6 +45,8 @@ export const ServerfullRuntimeCard: React.FC<ServerfullRuntimeCardProps> = ({
   const [restarting, setRestarting] = useState(false);
   const [submittingRestart, setSubmittingRestart] = useState(false);
   const [copiedChannel, setCopiedChannel] = useState<ReleaseChannel | null>(null);
+  const [selectedChannel, setSelectedChannel] = useState<ReleaseChannel | null>(null);
+  const [sudoOverride, setSudoOverride] = useState<boolean | null>(null);
   const pollTimerRef = useRef<number | null>(null);
   const copyTimerRef = useRef<number | null>(null);
 
@@ -64,8 +67,8 @@ export const ServerfullRuntimeCard: React.FC<ServerfullRuntimeCardProps> = ({
 
   const getChannelLabel = (channel: ReleaseChannel): string => {
     if (channel === "latest") return t("system.runtime.channelStable", "正式版 (latest)");
-    if (channel === "alpha") return t("system.runtime.channelAlpha", "Alpha 测试版 (alpha)");
-    return t("system.runtime.channelCanary", "Canary 金丝雀版 (canary)");
+    if (channel === "alpha") return t("system.runtime.channelAlpha", "测试版 (alpha)");
+    return t("system.runtime.channelCanary", "金丝雀版 (canary)");
   };
 
   const getInstallMethodLabel = (method: ServerfullRuntimeStatus["installMethod"]): string => {
@@ -229,8 +232,11 @@ export const ServerfullRuntimeCard: React.FC<ServerfullRuntimeCardProps> = ({
       <Card elevation={Elevation.ONE} className="p-6 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-wrap">
-            <H4 className="flex items-center space-x-2 text-base font-semibold m-0">
-              <Server className="w-5 h-5 text-emerald-500" />
+            <H4
+              className="flex items-center space-x-2 text-base font-semibold m-0"
+              style={{ margin: 0 }}
+            >
+              <Server className="w-5 h-5 text-emerald-500 shrink-0" />
               <span>{t("system.runtime.title", "版本与服务运行状态 (管理员)")}</span>
             </H4>
             <Tag minimal round intent={Intent.PRIMARY} className="font-mono">
@@ -315,88 +321,155 @@ export const ServerfullRuntimeCard: React.FC<ServerfullRuntimeCardProps> = ({
           </div>
         </div>
 
-        {/* 3 Release Channels */}
-        <div className="space-y-2.5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-            <span className="text-xs uppercase font-semibold text-gray-500 tracking-wider">
-              {t("system.runtime.channelsTitle", "发布通道与宿主机更新命令")}
-            </span>
-            {status.checkedAt && (
-              <span className="text-xs text-gray-500">
-                {t("system.runtime.lastChecked", "上次检查")}: {formatDateTime(new Date(status.checkedAt * 1000))}
-              </span>
-            )}
-          </div>
+        {/* Release Channel Selector + Focused Version View (Linux distribution track style) */}
+        {(() => {
+          const activeChannel: ReleaseChannel = selectedChannel ?? status.currentChannel ?? "latest";
+          const activeInfo = status.channels[activeChannel];
+          const isCurrentChannel = status.currentChannel === activeChannel;
+          const hasRemoteVersion = Boolean(activeInfo?.version);
+          const hasUpdate = isCurrentChannel && Boolean(activeInfo?.updateAvailable);
+          const supportsSudoToggle = status.platform !== "win32" && status.installMethod !== "source";
+          const defaultUseSudo =
+            supportsSudoToggle &&
+            (status.serviceManager === "systemd" ||
+              status.installMethod === "npm-global" ||
+              status.installMethod === "npx");
+          const useSudo = supportsSudoToggle && (sudoOverride ?? defaultUseSudo);
+          const displayCommand = activeInfo?.updateCommand
+            ? useSudo
+              ? activeInfo.updateCommand
+                  .split(" && ")
+                  .map((part) => (part.startsWith("sudo ") ? part : `sudo ${part}`))
+                  .join(" && ")
+              : activeInfo.updateCommand
+            : "";
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {RELEASE_CHANNELS.map((ch) => {
-              const info = status.channels[ch];
-              const isCurrentChannel = status.currentChannel === ch;
-              const hasRemoteVersion = Boolean(info?.version);
-              const hasUpdate = Boolean(info?.updateAvailable);
+          return (
+            <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <span className="text-xs uppercase font-semibold text-gray-500 tracking-wider">
+                  {t("system.runtime.channelsTitle", "发布通道与宿主机更新命令")}
+                </span>
+                {status.checkedAt && (
+                  <span className="text-xs text-gray-500">
+                    {t("system.runtime.lastChecked", "上次检查")}: {formatDateTime(new Date(status.checkedAt * 1000))}
+                  </span>
+                )}
+              </div>
 
-              return (
+              {/* Channel Track Tabs (Select channel first, defaulting to active running channel) */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div
-                  key={ch}
-                  className={
-                    isCurrentChannel
-                      ? "rounded-lg border border-blue-300 dark:border-blue-800/80 bg-blue-50/40 dark:bg-blue-950/20 p-3.5 space-y-2.5"
-                      : "rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/40 p-3.5 space-y-2.5"
-                  }
+                  className="inline-flex flex-wrap items-center gap-1 bg-gray-100/80 dark:bg-gray-800/70 p-1 rounded-lg self-start"
+                  role="tablist"
+                  aria-label={t("system.runtime.channelsTitle", "发布通道")}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">
-                      {getChannelLabel(ch)}
-                    </span>
-                    {isCurrentChannel && (
-                      <Tag minimal round intent={Intent.PRIMARY}>
-                        {t("system.runtime.currentChannelBadge", "当前")}
-                      </Tag>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2">
-                    <code className="text-xs font-mono font-semibold text-gray-900 dark:text-gray-100 truncate">
-                      {hasRemoteVersion ? `v${info.version}` : "-"}
-                    </code>
-                    {hasRemoteVersion && (
-                      <Tag minimal intent={hasUpdate ? Intent.WARNING : Intent.SUCCESS}>
-                        {hasUpdate
-                          ? t("system.runtime.updateAvailable", "有新版本")
-                          : t("system.runtime.upToDate", "已是最新")}
-                      </Tag>
-                    )}
-                  </div>
-
-                  {info?.updateCommand && (
-                    <div className="flex items-center justify-between gap-1.5 rounded bg-gray-100 dark:bg-gray-950/70 px-2 py-1.5 border border-gray-200/80 dark:border-gray-800">
-                      <code className="text-[11px] font-mono text-gray-700 dark:text-gray-300 truncate select-all" title={info.updateCommand}>
-                        {info.updateCommand}
-                      </code>
+                  {RELEASE_CHANNELS.map((ch) => {
+                    const selected = activeChannel === ch;
+                    const isRunningChannel = status.currentChannel === ch;
+                    return (
                       <Button
+                        key={ch}
                         minimal
                         small
-                        icon={copiedChannel === ch ? <Check size={12} className="text-green-500" /> : <Copy size={12} />}
-                        title={t("common.copy", "复制")}
-                        onClick={() => handleCopyCommand(ch, info.updateCommand)}
-                      />
-                    </div>
-                  )}
+                        active={selected}
+                        intent={selected ? Intent.PRIMARY : Intent.NONE}
+                        onClick={() => setSelectedChannel(ch)}
+                        className="text-xs font-medium"
+                      >
+                        <span className="inline-flex items-center gap-1.5">
+                          <span>{getChannelLabel(ch)}</span>
+                          {isRunningChannel && (
+                            <Tag minimal round intent={Intent.PRIMARY} className="text-[10px] leading-none">
+                              {t("system.runtime.currentChannelBadge", "当前")}
+                            </Tag>
+                          )}
+                        </span>
+                      </Button>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
 
-          <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-            <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
-            <span>
-              {t(
-                "system.runtime.securityHint",
-                "出于宿主机安全边界考量，软件包安装需在宿主机终端或容器编排侧执行；更新完成后可通过右上角安全重启服务。"
-              )}
-            </span>
-          </div>
-        </div>
+                {supportsSudoToggle && (
+                  <Switch
+                    checked={useSudo}
+                    label={t("system.runtime.sudoToggle", "使用 sudo")}
+                    onChange={(e) => setSudoOverride(e.currentTarget.checked)}
+                    className="mb-0 text-xs"
+                  />
+                )}
+              </div>
+
+              {/* Focused Selected Channel Card */}
+              <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/40 p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {t("system.runtime.channelLatestVersion", "通道最新版本")}:
+                    </span>
+                    <code className="text-sm font-mono font-semibold text-gray-900 dark:text-gray-100">
+                      {hasRemoteVersion ? `v${activeInfo.version}` : "-"}
+                    </code>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {isCurrentChannel ? (
+                      hasRemoteVersion && (
+                        <Tag minimal intent={hasUpdate ? Intent.WARNING : Intent.SUCCESS}>
+                          {hasUpdate
+                            ? t("system.runtime.updateAvailable", "有新版本")
+                            : t("system.runtime.upToDate", "已是最新")}
+                        </Tag>
+                      )
+                    ) : (
+                      <Tag minimal intent={Intent.NONE}>
+                        {t("system.runtime.otherChannelBadge", "非当前运行通道")}
+                      </Tag>
+                    )}
+                  </div>
+                </div>
+
+                {!isCurrentChannel && (
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    {t("system.runtime.channelSwitchHint", {
+                      current: status.currentChannel,
+                      target: activeChannel,
+                      defaultValue: `当前运行在 ${status.currentChannel} 通道；如需切换至 ${activeChannel} 通道，可在宿主机执行下方命令。`,
+                    })}
+                  </div>
+                )}
+
+                {displayCommand && (
+                  <div className="flex items-center justify-between gap-2 rounded bg-gray-100 dark:bg-gray-950/70 px-3 py-2 border border-gray-200/80 dark:border-gray-800">
+                    <code
+                      className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-nowrap select-all"
+                      title={displayCommand}
+                    >
+                      {displayCommand}
+                    </code>
+                    <Button
+                      minimal
+                      small
+                      icon={copiedChannel === activeChannel ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+                      title={t("common.copy", "复制")}
+                      onClick={() => handleCopyCommand(activeChannel, displayCommand)}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                <span>
+                  {t(
+                    "system.runtime.securityHint",
+                    "出于宿主机安全边界考量，软件包安装需在宿主机终端或容器编排侧执行；更新完成后可通过右上角安全重启服务。"
+                  )}
+                </span>
+              </div>
+            </div>
+          );
+        })()}
       </Card>
 
       <Dialog

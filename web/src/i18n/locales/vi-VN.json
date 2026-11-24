@@ -238,7 +238,9 @@
     "inviteCodeRequired": "Vui lòng nhập mã mời 6 ký tự.",
     "inviteCodeInvalid": "Mã mời không hợp lệ. Vui lòng kiểm tra mã 6 ký tự (A-Z, 0-9).",
     "inviteCodeExpired": "Mã mời này đã hết hạn.",
-    "inviteCodeExhausted": "Mã mời này đã hết lượt sử dụng."
+    "inviteCodeExhausted": "Mã mời này đã hết lượt sử dụng.",
+    "skipPasswordSignup": "Bỏ qua mật khẩu và đăng ký không cần mật khẩu",
+    "passwordlessMfaRequiredHint": "Bạn đã chọn đăng ký không mật khẩu. Vui lòng thiết lập Passkey hoặc TOTP để tiếp tục."
   },
   "setup": {
     "title": "Hướng dẫn cài đặt",
@@ -1081,7 +1083,9 @@
       "unconfiguredHint": "Chưa có phương thức MFA nào được cấu hình. Hãy thiết lập Passkey hoặc ứng dụng xác thực bên dưới.",
       "password": "Mật khẩu",
       "passkey": "Passkey",
-      "totp": "TOTP"
+      "totp": "TOTP",
+      "passwordlessLockedHint": "Không thể tắt đăng nhập không mật khẩu cho tài khoản chưa có mật khẩu. Vui lòng thêm mật khẩu trước.",
+      "cannotRemoveLastWithoutPassword": "Tài khoản không mật khẩu phải giữ ít nhất một phương thức MFA (Passkey hoặc TOTP). Hãy thêm mật khẩu trước khi xóa."
     },
     "recoveryKey": {
       "title": "Khóa khôi phục khẩn cấp",
@@ -1222,7 +1226,11 @@
     "inviteExpiry7d": "Hết hạn sau 7 ngày",
     "inviteExpiry30d": "Hết hạn sau 30 ngày",
     "inviteExpiryCustom": "Tùy chỉnh hạn",
-    "inviteCustomExpiryLabel": "Thời gian hết hạn"
+    "inviteCustomExpiryLabel": "Thời gian hết hạn",
+    "addPassword": "Thêm mật khẩu",
+    "addPasswordBtn": "Thêm mật khẩu",
+    "addPasswordWithPasskey": "Xác minh bằng Passkey & thêm mật khẩu",
+    "passwordAddedSuccess": "Đã thêm mật khẩu thành công!"
   },
   "intro": {
     "item1Title": "DNS Worker Protective DNS",
@@ -1377,8 +1385,8 @@
       "channelsTitle": "Kênh phát hành & Lệnh cập nhật trên máy chủ",
       "lastChecked": "Kiểm tra lần cuối",
       "channelStable": "Chính thức (latest)",
-      "channelAlpha": "Alpha (alpha)",
-      "channelCanary": "Canary (canary)",
+      "channelAlpha": "Alpha",
+      "channelCanary": "Canary",
       "currentChannelBadge": "Hiện tại",
       "updateAvailable": "Có bản mới",
       "upToDate": "Mới nhất",
@@ -1386,7 +1394,11 @@
       "restartConfirmTitle": "Xác nhận khởi động lại an toàn",
       "restartConfirmDesc": "Bạn có chắc muốn khởi động lại dịch vụ DNS Worker? Hệ thống sẽ ghi log, checkpoint SQLite WAL rồi thoát gọn để systemd hoặc Docker tự bật lại.",
       "restartConfirmWarning": "UDP / DoT / DoH và giao diện quản trị sẽ gián đoạn khoảng 5–10 giây. Hãy đảm bảo chính sách tự khởi động lại của systemd hoặc Docker đang bật.",
-      "confirmRestartAction": "Khởi động lại ngay"
+      "confirmRestartAction": "Khởi động lại ngay",
+      "channelLatestVersion": "Phiên bản mới nhất của kênh",
+      "otherChannelBadge": "Kênh khác",
+      "channelSwitchHint": "Hiện đang chạy trên kênh {{current}}. Chạy lệnh bên dưới trên máy chủ nếu bạn muốn chuyển sang kênh {{target}}.",
+      "sudoToggle": "Dùng sudo"
     }
   },
   "migrationAlert": {

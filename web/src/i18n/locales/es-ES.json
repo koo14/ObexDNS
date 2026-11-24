@@ -238,7 +238,9 @@
     "inviteCodeRequired": "Por favor, introduce un código de invitación de 6 caracteres.",
     "inviteCodeInvalid": "Código de invitación no válido. Verifica los 6 caracteres (A-Z, 0-9).",
     "inviteCodeExpired": "Este código de invitación ha expirado.",
-    "inviteCodeExhausted": "Este código de invitación ya no tiene usos disponibles."
+    "inviteCodeExhausted": "Este código de invitación ya no tiene usos disponibles.",
+    "skipPasswordSignup": "Omitir contraseña y registrarse sin contraseña",
+    "passwordlessMfaRequiredHint": "Has elegido el registro sin contraseña. Configura una Passkey o TOTP para continuar."
   },
   "setup": {
     "title": "Guía de instalación",
@@ -1081,7 +1083,9 @@
       "unconfiguredHint": "Aún no hay ningún método MFA configurado. Configure un Passkey o app de autenticación a continuación.",
       "password": "Contraseña",
       "passkey": "Passkey",
-      "totp": "TOTP"
+      "totp": "TOTP",
+      "passwordlessLockedHint": "El inicio de sesión sin contraseña no se puede desactivar en cuentas sin contraseña. Añade una contraseña primero.",
+      "cannotRemoveLastWithoutPassword": "Las cuentas sin contraseña deben conservar al menos un método MFA (Passkey o TOTP). Añade una contraseña antes de eliminarlo."
     },
     "recoveryKey": {
       "title": "Clave de recuperación de emergencia",
@@ -1222,7 +1226,11 @@
     "inviteExpiry7d": "Expira en 7 días",
     "inviteExpiry30d": "Expira en 30 días",
     "inviteExpiryCustom": "Expiración personalizada",
-    "inviteCustomExpiryLabel": "Fecha límite"
+    "inviteCustomExpiryLabel": "Fecha límite",
+    "addPassword": "Añadir contraseña",
+    "addPasswordBtn": "Añadir contraseña",
+    "addPasswordWithPasskey": "Verificar con Passkey y añadir",
+    "passwordAddedSuccess": "¡Contraseña añadida correctamente!"
   },
   "intro": {
     "item1Title": "DNS Worker de protección",
@@ -1377,8 +1385,8 @@
       "channelsTitle": "Canales de lanzamiento y comandos de actualización",
       "lastChecked": "Última comprobación",
       "channelStable": "Estable (latest)",
-      "channelAlpha": "Alpha (alpha)",
-      "channelCanary": "Canary (canary)",
+      "channelAlpha": "Alpha",
+      "channelCanary": "Canary",
       "currentChannelBadge": "Actual",
       "updateAvailable": "Actualización disponible",
       "upToDate": "Al día",
@@ -1386,7 +1394,11 @@
       "restartConfirmTitle": "Confirmar reinicio ordenado",
       "restartConfirmDesc": "¿Seguro que deseas reiniciar el servicio DNS Worker? Se volcarán registros y puntos de control WAL de SQLite antes de que systemd o Docker reinicien el proceso.",
       "restartConfirmWarning": "UDP / DoT / DoH y el panel web no estarán disponibles durante ~5–10 segundos. Asegúrate de tener activa la política de reinicio en systemd o Docker.",
-      "confirmRestartAction": "Reiniciar ahora"
+      "confirmRestartAction": "Reiniciar ahora",
+      "channelLatestVersion": "Última versión del canal",
+      "otherChannelBadge": "Otro canal",
+      "channelSwitchHint": "Ejecutándose actualmente en el canal {{current}}. Ejecuta el siguiente comando en el host si deseas cambiar a {{target}}.",
+      "sudoToggle": "Usar sudo"
     }
   },
   "migrationAlert": {

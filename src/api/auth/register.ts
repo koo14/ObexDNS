@@ -22,6 +22,27 @@ import { getDefaultUpstreamUrl } from "../../constants/presets";
 import { syncProfileKeysToDo } from "../../lib/accessKeyRegistry";
 import { ensureDemoDataSeeded } from "../../lib/demoMode";
 
+const PLACEHOLDER_PASSWORD_CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+[]{}|;:,.<>?";
+
+/**
+ * Generates a cryptographically random placeholder password for passwordless accounts.
+ */
+function generatePlaceholderPassword(length: number = 64): string {
+  const charsetLen = PLACEHOLDER_PASSWORD_CHARSET.length;
+  const maxValidByte = Math.floor(256 / charsetLen) * charsetLen;
+  let result = "";
+  const buf = new Uint8Array(length * 2);
+  while (result.length < length) {
+    crypto.getRandomValues(buf);
+    for (let i = 0; i < buf.length && result.length < length; i++) {
+      if (buf[i] < maxValidByte) {
+        result += PLACEHOLDER_PASSWORD_CHARSET[buf[i] % charsetLen];
+      }
+    }
+  }
+  return result;
+}
+
 /**
  * Handle user registration requests (signup)
  */
@@ -40,7 +61,8 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
     return new Response("Too many attempts", { status: 429 });
   }
 
-  const { username, password, turnstileToken, inviteCode } = await request.json() as any;
+  const { username, password, skipPassword, turnstileToken, inviteCode } = await request.json() as any;
+  const isPasswordless = skipPassword === true;
   const settingsModel = new SystemSettingsModel(env.DB);
   const [secretKey, enabled, registrationEnabled, inviteCodeEnabled, maxUsersSetting, isDbEmpty] = await Promise.all([
     settingsModel.get('turnstile_secret_key'),
@@ -95,7 +117,7 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
 
   const trimmedUsername = typeof username === "string" ? username.trim() : "";
   if (!USERNAME_REGEX.test(trimmedUsername)) return new Response("Invalid username", { status: 400 });
-  if (!password || !PASSWORD_REGEX.test(password)) {
+  if (!isPasswordless && (!password || !PASSWORD_REGEX.test(password))) {
     return new Response("Password format error", { status: 400 });
   }
 
@@ -126,7 +148,8 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
     return new Response("jwt_secret_invalid", { status: 400 });
   }
 
-  const hashedPassword = await hashPassword(password, 2);
+  const rawPasswordForHashing = isPasswordless ? generatePlaceholderPassword(64) : password;
+  const hashedPassword = await hashPassword(rawPasswordForHashing, 2);
   const userId = await userModel.generateUniqueUserId(trimmedUsername);
   const cf = (request as any).cf;
   const timezone = cf?.timezone || request.headers.get("CF-Timezone") || null;
@@ -152,6 +175,7 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
         role,
         timezone,
         inviteCode: requiresInviteCode ? normalizedInviteCode : null,
+        hasPassword: !isPasswordless,
         passwordVersion: 2
       },
       isDbEmpty ? 0 : maxUsers
@@ -191,6 +215,9 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
     const recoveryKey = generateRecoveryKey();
     const recoveryKeyHash = await hashRecoveryKey(recoveryKey);
     await userModel.updateRecoveryKeys(userId, [{ hash: recoveryKeyHash }] as any);
+    if (isPasswordless) {
+      await userModel.updateTOTPSettings(userId, true);
+    }
 
     const { session, refreshToken } = await createSession(env, userId, clientIp, userAgent, latitude, longitude, false);
     const sessionHash = await generateSessionHash(session.id, userId);

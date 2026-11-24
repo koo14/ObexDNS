@@ -238,7 +238,9 @@
     "inviteCodeRequired": "Пожалуйста, введите 6-значный код приглашения.",
     "inviteCodeInvalid": "Неверный код приглашения. Проверьте 6 символов (A-Z, 0-9).",
     "inviteCodeExpired": "Срок действия этого кода приглашения истёк.",
-    "inviteCodeExhausted": "Лимит использований этого кода приглашения исчерпан."
+    "inviteCodeExhausted": "Лимит использований этого кода приглашения исчерпан.",
+    "skipPasswordSignup": "Пропустить пароль и создать аккаунт без пароля",
+    "passwordlessMfaRequiredHint": "Выбрана регистрация без пароля. Привяжите Passkey или TOTP, чтобы продолжить."
   },
   "setup": {
     "title": "Руководство по установке",
@@ -1081,7 +1083,9 @@
       "unconfiguredHint": "Методы MFA еще не настроены. Добавьте Passkey или приложение-аутентификатор ниже.",
       "password": "Пароль",
       "passkey": "Passkey",
-      "totp": "TOTP"
+      "totp": "TOTP",
+      "passwordlessLockedHint": "Вход без пароля нельзя отключить для беспарольного аккаунта. Сначала добавьте пароль.",
+      "cannotRemoveLastWithoutPassword": "Беспарольный аккаунт должен сохранять хотя бы один метод MFA (Passkey или TOTP). Сначала добавьте пароль."
     },
     "recoveryKey": {
       "title": "Экстренный ключ восстановления",
@@ -1222,7 +1226,11 @@
     "inviteExpiry7d": "Истекает через 7 дней",
     "inviteExpiry30d": "Истекает через 30 дней",
     "inviteExpiryCustom": "Свой срок действия",
-    "inviteCustomExpiryLabel": "Истекает"
+    "inviteCustomExpiryLabel": "Истекает",
+    "addPassword": "Добавить пароль",
+    "addPasswordBtn": "Добавить пароль",
+    "addPasswordWithPasskey": "Подтвердить Passkey и добавить пароль",
+    "passwordAddedSuccess": "Пароль успешно добавлен!"
   },
   "intro": {
     "item1Title": "Защитный DNS Worker",
@@ -1377,8 +1385,8 @@
       "channelsTitle": "Каналы обновлений и команды для хоста",
       "lastChecked": "Проверено",
       "channelStable": "Стабильная (latest)",
-      "channelAlpha": "Alpha-версия (alpha)",
-      "channelCanary": "Canary-версия (canary)",
+      "channelAlpha": "Альфа (alpha)",
+      "channelCanary": "Canary",
       "currentChannelBadge": "Текущий",
       "updateAvailable": "Доступно обновление",
       "upToDate": "Актуально",
@@ -1386,7 +1394,11 @@
       "restartConfirmTitle": "Подтвердить корректный перезапуск",
       "restartConfirmDesc": "Перезапустить сервис DNS Worker? Буферы логов и контрольная точка SQLite WAL будут сброшены перед завершением, после чего systemd или Docker автоматически перезапустят процесс.",
       "restartConfirmWarning": "UDP / DoT / DoH и панель управления будут недоступны около 5–10 секунд. Убедитесь, что включена политика перезапуска systemd или Docker.",
-      "confirmRestartAction": "Перезапустить"
+      "confirmRestartAction": "Перезапустить",
+      "channelLatestVersion": "Последняя версия канала",
+      "otherChannelBadge": "Другой канал",
+      "channelSwitchHint": "Сейчас используется канал {{current}}. Выполните команду ниже на хосте, чтобы переключиться на канал {{target}}.",
+      "sudoToggle": "Использовать sudo"
     }
   },
   "migrationAlert": {

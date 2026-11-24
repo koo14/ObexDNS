@@ -238,7 +238,9 @@
     "inviteCodeRequired": "Bitte geben Sie einen 6-stelligen Einladungscode ein.",
     "inviteCodeInvalid": "Ungültiger Einladungscode. Bitte prüfen Sie die 6 Zeichen (A-Z, 0-9).",
     "inviteCodeExpired": "Dieser Einladungscode ist abgelaufen.",
-    "inviteCodeExhausted": "Dieser Einladungscode hat keine verbleibenden Nutzungen mehr."
+    "inviteCodeExhausted": "Dieser Einladungscode hat keine verbleibenden Nutzungen mehr.",
+    "skipPasswordSignup": "Passwort überspringen und passwortlos registrieren",
+    "passwordlessMfaRequiredHint": "Passwortlose Registrierung gewählt. Bitte richten Sie einen Passkey oder TOTP ein, um fortzufahren."
   },
   "setup": {
     "title": "Installationsanleitung",
@@ -1081,7 +1083,9 @@
       "unconfiguredHint": "Noch keine MFA konfiguriert. Richten Sie unten einen Passkey oder eine Authentifikator-App ein.",
       "password": "Passwort",
       "passkey": "Passkey",
-      "totp": "TOTP"
+      "totp": "TOTP",
+      "passwordlessLockedHint": "Passwortlose Anmeldung kann bei Konten ohne Passwort nicht deaktiviert werden. Fügen Sie zuerst ein Passwort hinzu.",
+      "cannotRemoveLastWithoutPassword": "Konten ohne Passwort müssen mindestens eine MFA-Methode (Passkey oder TOTP) behalten. Fügen Sie zuerst ein Passwort hinzu."
     },
     "recoveryKey": {
       "title": "Notfall-Wiederherstellungsschlüssel",
@@ -1222,7 +1226,11 @@
     "inviteExpiry7d": "Läuft in 7 Tagen ab",
     "inviteExpiry30d": "Läuft in 30 Tagen ab",
     "inviteExpiryCustom": "Benutzerdefiniertes Ablaufdatum",
-    "inviteCustomExpiryLabel": "Ablaufzeitpunkt"
+    "inviteCustomExpiryLabel": "Ablaufzeitpunkt",
+    "addPassword": "Passwort hinzufügen",
+    "addPasswordBtn": "Passwort hinzufügen",
+    "addPasswordWithPasskey": "Mit Passkey bestätigen & hinzufügen",
+    "passwordAddedSuccess": "Passwort erfolgreich hinzugefügt!"
   },
   "intro": {
     "item1Title": "DNS Worker Schützendes DNS",
@@ -1377,8 +1385,8 @@
       "channelsTitle": "Release-Kanäle & Host-Update-Befehle",
       "lastChecked": "Zuletzt geprüft",
       "channelStable": "Stabil (latest)",
-      "channelAlpha": "Alpha (alpha)",
-      "channelCanary": "Canary (canary)",
+      "channelAlpha": "Alpha",
+      "channelCanary": "Canary",
       "currentChannelBadge": "Aktuell",
       "updateAvailable": "Update verfügbar",
       "upToDate": "Aktuell",
@@ -1386,7 +1394,11 @@
       "restartConfirmTitle": "Geordneten Neustart bestätigen",
       "restartConfirmDesc": "Möchten Sie DNS Worker wirklich neu starten? Protokolle und SQLite-WAL-Checkpoints werden sauber geleert, bevor systemd oder Docker den Prozess neu startet.",
       "restartConfirmWarning": "UDP / DoT / DoH und Dashboard sind ca. 5–10 Sekunden nicht erreichbar. Stellen Sie sicher, dass eine systemd- oder Docker-Neustartrichtlinie aktiv ist.",
-      "confirmRestartAction": "Jetzt neu starten"
+      "confirmRestartAction": "Jetzt neu starten",
+      "channelLatestVersion": "Neueste Kanalversion",
+      "otherChannelBadge": "Anderer Kanal",
+      "channelSwitchHint": "Läuft aktuell auf dem Kanal {{current}}. Führen Sie den folgenden Befehl auf dem Host aus, um zu {{target}} zu wechseln.",
+      "sudoToggle": "sudo verwenden"
     }
   },
   "migrationAlert": {

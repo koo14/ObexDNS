@@ -59,7 +59,8 @@ export interface LoginResponse {
 
 export interface SignupPayload {
   username: string;
-  password: string;
+  password?: string;
+  skipPassword?: boolean;
   turnstileToken: string | null;
   inviteCode?: string;
 }

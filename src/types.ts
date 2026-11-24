@@ -190,6 +190,7 @@ export interface User {
   timezone?: string | null;
   locale?: string | null;
   invite_code?: string | null;
+  has_password?: number | boolean;
   password_version?: number;
   pin_hash?: string | null;
   isPaused?: boolean;

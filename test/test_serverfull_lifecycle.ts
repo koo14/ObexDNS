@@ -147,7 +147,7 @@ async function testLifecycleManagerCachingAndRestart(): Promise<void> {
     }) as typeof fetch,
   });
 
-  // First fetch populates cache
+  // First fetch populates cache (only active channel reports updateAvailable)
   const status1 = await manager.getStatus();
   assert.equal(fetchCount, 1);
   assert.equal(status1.supported, true);
@@ -156,19 +156,50 @@ async function testLifecycleManagerCachingAndRestart(): Promise<void> {
   assert.equal(status1.channels.latest.version, '1.3.5');
   assert.equal(status1.channels.latest.updateAvailable, false);
   assert.equal(status1.channels.alpha.version, '1.3.5-alpha.1112223');
-  assert.equal(status1.channels.alpha.updateAvailable, true);
+  assert.equal(status1.channels.alpha.updateAvailable, false);
   assert.equal(status1.channels.canary.version, '1.3.5-canary.9998887');
-  assert.equal(status1.channels.canary.updateAvailable, true);
+  assert.equal(status1.channels.canary.updateAvailable, false);
+
+  // Canary installation only flags updates on canary channel, never on latest/alpha
+  const canaryManager = new ServerfullLifecycleManager({
+    currentVersion: '1.3.5-canary.0000001',
+    startedAt: 1700000000,
+    runtime: 'Node.js v24.0.0',
+    packageRoot: '/usr/lib/node_modules/dns-worker',
+    workersCount: 1,
+    envInfo: {
+      platform: 'linux',
+      installMethod: 'npm-global',
+      serviceManager: 'systemd',
+      canRestart: true,
+      restartReason: null,
+    },
+    onRestart: () => {},
+    fetchFn: (async () =>
+      new Response(
+        JSON.stringify({
+          latest: '1.3.5',
+          alpha: '1.3.5-alpha.1112223',
+          canary: '1.3.5-canary.9998887',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )) as typeof fetch,
+  });
+  const canaryStatus = await canaryManager.getStatus();
+  assert.equal(canaryStatus.currentChannel, 'canary');
+  assert.equal(canaryStatus.channels.latest.updateAvailable, false);
+  assert.equal(canaryStatus.channels.alpha.updateAvailable, false);
+  assert.equal(canaryStatus.channels.canary.updateAvailable, true);
 
   // Second call within TTL uses cache
   await manager.getStatus();
   assert.equal(fetchCount, 1);
 
-  // forceRefresh hits registry again and captures error cleanly while keeping stale tags
+  // forceRefresh hits registry again and returns a safe generic error while keeping stale tags
   shouldFailFetch = true;
   const statusErr = await manager.getStatus({ forceRefresh: true });
   assert.equal(fetchCount, 2);
-  assert.ok(statusErr.checkError?.includes('ECONNREFUSED'));
+  assert.equal(statusErr.checkError, 'Failed to reach npm registry');
   assert.equal(statusErr.channels.alpha.version, '1.3.5-alpha.1112223');
 
   // requestRestart is idempotent and invokes onRestart after delay

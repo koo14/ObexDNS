@@ -238,7 +238,10 @@ export class ServerfullLifecycleManager implements ServerfullLifecycleBridge {
       return {
         channel,
         version: remoteVersion,
-        updateAvailable: Boolean(remoteVersion && remoteVersion !== this.currentVersion),
+        // Only flag updates for the active channel the service is actually tracking
+        updateAvailable:
+          channel === this.currentChannel &&
+          Boolean(remoteVersion && remoteVersion !== this.currentVersion),
         updateCommand: buildChannelUpdateCommand(
           channel,
           this.envInfo.installMethod,
@@ -309,7 +312,9 @@ export class ServerfullLifecycleManager implements ServerfullLifecycleBridge {
           signal: AbortSignal.timeout(REGISTRY_TIMEOUT_MS),
         });
         if (!res.ok) {
-          throw new Error(`npm registry returned HTTP ${res.status}`);
+          this.cachedAt = Math.floor(Date.now() / 1000);
+          this.lastCheckError = `npm registry returned HTTP ${res.status}`;
+          return;
         }
         const data = (await res.json()) as Record<string, unknown>;
         const nextTags: Partial<Record<ReleaseChannel, string>> = {};
@@ -323,9 +328,12 @@ export class ServerfullLifecycleManager implements ServerfullLifecycleBridge {
         this.cachedAt = Math.floor(Date.now() / 1000);
         this.lastCheckError = null;
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
+        console.warn('[Serverfull Lifecycle] Failed to fetch npm dist-tags:', err);
         this.cachedAt = Math.floor(Date.now() / 1000);
-        this.lastCheckError = msg || 'Failed to reach npm registry';
+        this.lastCheckError =
+          err instanceof Error && err.name === 'TimeoutError'
+            ? 'npm registry request timed out'
+            : 'Failed to reach npm registry';
       } finally {
         this.inflightCheck = null;
       }

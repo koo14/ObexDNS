@@ -139,7 +139,7 @@ export const SystemView: React.FC<SystemViewProps> = ({ onSavingChange, toasterR
         <div>
           <h2 ref={headerTitleRef} className="bp6-heading">{t("system.title", "系统管理")}</h2>
           <p className="bp6-text-muted">
-            {t("system.subtitle", "管理用户、系统过滤列表、系统配置与数据库维护")}
+            {t("system.subtitle", "管理账号、系统过滤列表、系统配置与数据库维护")}
           </p>
         </div>
         <div className="flex items-center justify-end gap-2 flex-wrap shrink-0 w-full sm:w-auto">

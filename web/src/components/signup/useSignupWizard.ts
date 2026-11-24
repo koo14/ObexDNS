@@ -85,6 +85,7 @@ export const useSignupWizard = ({
   const [mfaChoice, setMfaChoice] = useState<"choose" | "totp">("choose");
   const [passkeyRegLoading, setPasskeyRegLoading] = useState(false);
   const [passkeyRegError, setPasskeyRegError] = useState("");
+  const [isPasswordlessSignup, setIsPasswordlessSignup] = useState(false);
 
   const { t } = useTranslation();
 
@@ -169,7 +170,12 @@ export const useSignupWizard = ({
       setSignupStep("totp");
     } catch (e) {
       console.error("Network error during signup TOTP setup:", e);
-      onSuccess();
+      if (isPasswordlessSignup) {
+        setTotpSetupError(t("common.errorNetwork", "Network error"));
+        setMfaChoice("choose");
+      } else {
+        onSuccess();
+      }
     } finally {
       setTotpSetupLoading(false);
     }
@@ -283,6 +289,7 @@ export const useSignupWizard = ({
         setTotpRecoveryKeys([data.recoveryKey]);
       }
 
+      setIsPasswordlessSignup(false);
       setMfaChoice("choose");
       setSignupStep("totp");
     } catch (err: any) {
@@ -302,6 +309,45 @@ export const useSignupWizard = ({
     }
   };
 
+  const handleSkipPasswordSignup = async () => {
+    if (!validateUsername(username)) {
+      setError(t("auth.formatTipUsername"));
+      return;
+    }
+    if (isTurnstileEnabled && authConfig?.turnstile_site_key && !turnstileToken) {
+      setError(t("auth.turnstileRequired"));
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      const data = await signup({
+        username,
+        skipPassword: true,
+        turnstileToken,
+        ...(requiresInviteCode ? { inviteCode: inviteCode.trim().toUpperCase() } : {})
+      });
+
+      if (data.accessToken) {
+        setAccessToken(data.accessToken);
+      }
+
+      if (data.recoveryKey) {
+        setTotpRecoveryKeys([data.recoveryKey]);
+      }
+
+      setIsPasswordlessSignup(true);
+      setMfaChoice("choose");
+      setSignupStep("totp");
+    } catch (err: any) {
+      setError(formatApiErrorMessage(err, t));
+      resetTurnstile();
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return {
     signupStep,
     setSignupStep,
@@ -312,6 +358,7 @@ export const useSignupWizard = ({
     requiresInviteCode,
     password,
     setPassword,
+    isPasswordlessSignup,
     mfaChoice,
     setMfaChoice,
     passkeyRegLoading,
@@ -341,6 +388,7 @@ export const useSignupWizard = ({
     handleSignupUsernameSubmit,
     handleSignupTotpConfirm,
     handleCopySignupRecoveryKeys,
-    handleSignupSubmit
+    handleSignupSubmit,
+    handleSkipPasswordSignup
   };
 };
