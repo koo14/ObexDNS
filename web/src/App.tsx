@@ -4,7 +4,6 @@ import { Spinner, OverlayToaster } from "@blueprintjs/core";
 import { useTranslation } from "react-i18next";
 import { Helmet } from "react-helmet-async";
 import { Routes, Route, useNavigate, useLocation, Navigate } from "react-router-dom";
-import { GitHubCorner } from "./components/GithubCorner";
 import { lazyWithPreload } from "./utils/lazyWithPreload";
 import { DashboardHomeView } from "./views/DashboardHomeView";
 import { MainLayout } from "./layouts/MainLayout";
@@ -101,7 +100,6 @@ function App() {
   if (isLoggedIn === null) {
     return (
       <div className="h-screen flex items-center justify-center">
-        <GitHubCorner />
         <Spinner size={50} />
       </div>
     );
@@ -121,7 +119,6 @@ function App() {
           <meta name="description" content={pageMeta.description} />
           <html lang={i18n.language} />
         </Helmet>
-        <GitHubCorner />
         <OverlayToaster position="bottom" ref={toasterRef} />
         <AuthView onSuccess={checkAuth} theme={theme} setTheme={setTheme} />
       </Suspense>
