@@ -123,7 +123,7 @@ function App() {
         </Helmet>
         <GitHubCorner />
         <OverlayToaster position="bottom" ref={toasterRef} />
-        <AuthView onSuccess={checkAuth} />
+        <AuthView onSuccess={checkAuth} theme={theme} setTheme={setTheme} />
       </Suspense>
     );
   }
@@ -162,7 +162,13 @@ function App() {
         <html lang={i18n.language} />
       </Helmet>
       <OverlayToaster position="bottom" ref={toasterRef} />
-      <IdleSessionLock currentUser={currentUser} handleLogout={handleLogout} onUnlock={fetchProfiles}>
+      <IdleSessionLock
+        currentUser={currentUser}
+        handleLogout={handleLogout}
+        onUnlock={fetchProfiles}
+        theme={theme}
+        setTheme={setTheme}
+      >
         <Routes>
           <Route path="/" element={<Navigate to="/access-points/setup" replace />} />
           <Route path="/access-points" element={<Navigate to="/access-points/manage" replace />} />
