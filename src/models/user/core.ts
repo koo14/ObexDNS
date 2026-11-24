@@ -147,6 +147,7 @@ export class UserCoreModel {
         (SELECT COUNT(1) FROM passkeys p WHERE p.user_id = u.id) as passkeys_count,
         u.timezone,
         u.locale,
+        u.invite_code,
         u.last_active_at as last_resolve_at
       FROM users u
       ORDER BY u.created_at DESC
@@ -169,8 +170,8 @@ export class UserCoreModel {
     const now = Math.floor(Date.now() / 1000);
     if (user.role === "admin") {
       const result = await this.db.prepare(
-        "INSERT INTO users (id, username, hashed_password, role, created_at, timezone, locale, password_version) " +
-        "SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)"
+        "INSERT INTO users (id, username, hashed_password, role, created_at, timezone, locale, invite_code, password_version) " +
+        "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)"
       ).bind(
         user.id,
         user.username,
@@ -179,6 +180,7 @@ export class UserCoreModel {
         now,
         user.timezone || null,
         user.locale || 'en-US',
+        user.inviteCode || null,
         user.passwordVersion ?? 2
       ).run();
       if (!result.success) throw new Error("Failed to create admin user");
@@ -187,8 +189,8 @@ export class UserCoreModel {
 
     if (maxUsers > 0) {
       const result = await this.db.prepare(
-        "INSERT INTO users (id, username, hashed_password, role, created_at, timezone, locale, password_version) " +
-        "SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM users) < ?"
+        "INSERT INTO users (id, username, hashed_password, role, created_at, timezone, locale, invite_code, password_version) " +
+        "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM users) < ?"
       ).bind(
         user.id,
         user.username,
@@ -197,6 +199,7 @@ export class UserCoreModel {
         now,
         user.timezone || null,
         user.locale || 'en-US',
+        user.inviteCode || null,
         user.passwordVersion ?? 2,
         maxUsers
       ).run();
@@ -218,7 +221,7 @@ export class UserCoreModel {
   async create(user: CreateUserOptions): Promise<boolean> {
     const now = Math.floor(Date.now() / 1000);
     const result = await this.db.prepare(
-      "INSERT INTO users (id, username, hashed_password, role, created_at, timezone, locale, password_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO users (id, username, hashed_password, role, created_at, timezone, locale, invite_code, password_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ).bind(
       user.id,
       user.username,
@@ -227,6 +230,7 @@ export class UserCoreModel {
       now,
       user.timezone || null,
       user.locale || 'en-US',
+      user.inviteCode || null,
       user.passwordVersion ?? 2
     ).run();
     return result.success;

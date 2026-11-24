@@ -13,9 +13,10 @@ import { UserModel } from "../../models/user";
 import { ProfileModel } from "../../models/profile";
 import { ActivityLogModel } from "../../models/activityLog";
 import { SystemSettingsModel } from "../../models/systemSettings";
+import { InviteCodeModel } from "../../models/inviteCode";
 import { generateRecoveryKey, hashRecoveryKey } from "../../lib/totp";
 import { cacheUtils } from "../../utils/cache";
-import { PASSWORD_REGEX, USERNAME_REGEX } from "../../utils/validator";
+import { PASSWORD_REGEX, USERNAME_REGEX, normalizeInviteCode } from "../../utils/validator";
 import { verifyTurnstile } from "./utils";
 import { getDefaultUpstreamUrl } from "../../constants/presets";
 import { syncProfileKeysToDo } from "../../lib/accessKeyRegistry";
@@ -39,12 +40,13 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
     return new Response("Too many attempts", { status: 429 });
   }
 
-  const { username, password, turnstileToken } = await request.json() as any;
+  const { username, password, turnstileToken, inviteCode } = await request.json() as any;
   const settingsModel = new SystemSettingsModel(env.DB);
-  const [secretKey, enabled, registrationEnabled, maxUsersSetting, isDbEmpty] = await Promise.all([
+  const [secretKey, enabled, registrationEnabled, inviteCodeEnabled, maxUsersSetting, isDbEmpty] = await Promise.all([
     settingsModel.get('turnstile_secret_key'),
     settingsModel.get('turnstile_enabled_signup'),
     settingsModel.get('registration_enabled'),
+    settingsModel.get('invite_code_enabled'),
     settingsModel.get('max_users'),
     userModel.isEmpty()
   ]);
@@ -61,6 +63,23 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
     const currentCount = await userModel.count();
     if (currentCount >= maxUsers) {
       return new Response("max_users_reached", { status: 403 });
+    }
+  }
+
+  // 邀请码拦截：开启邀请码注册后，除首位管理员初始化外必须提供有效且未过期/未耗尽的 6 位邀请码
+  const requiresInviteCode = !isDbEmpty && inviteCodeEnabled === 'true';
+  const normalizedInviteCode = normalizeInviteCode(inviteCode);
+  const inviteCodeModel = new InviteCodeModel(env.DB);
+  if (requiresInviteCode) {
+    if (await cacheUtils.isRateLimited(cache, `signup_invite:${clientIp}`, 5, 60)) {
+      return new Response("Too many attempts", { status: 429 });
+    }
+    if (!normalizedInviteCode) {
+      return new Response("invite_code_required", { status: 400 });
+    }
+    const inviteValidation = await inviteCodeModel.validateForSignup(normalizedInviteCode);
+    if (!inviteValidation.valid) {
+      return new Response(inviteValidation.reason, { status: 400 });
     }
   }
 
@@ -114,15 +133,35 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
   const role = isDbEmpty ? 'admin' : 'user';
 
   let userCreated = false;
+  let inviteConsumed = false;
   try {
+    if (requiresInviteCode) {
+      const consumed = await inviteCodeModel.consumeAtomically(normalizedInviteCode);
+      if (!consumed) {
+        const recheck = await inviteCodeModel.validateForSignup(normalizedInviteCode);
+        return new Response(recheck.valid ? "invite_code_invalid" : recheck.reason, { status: 400 });
+      }
+      inviteConsumed = true;
+    }
+
     const createStatus = await userModel.createAtomic(
-      { id: userId, username: trimmedUsername, passwordHash: hashedPassword, role, timezone, passwordVersion: 2 },
+      {
+        id: userId,
+        username: trimmedUsername,
+        passwordHash: hashedPassword,
+        role,
+        timezone,
+        inviteCode: requiresInviteCode ? normalizedInviteCode : null,
+        passwordVersion: 2
+      },
       isDbEmpty ? 0 : maxUsers
     );
     if (createStatus === "admin_exists") {
+      if (inviteConsumed) await inviteCodeModel.refundOne(normalizedInviteCode);
       return new Response("registration_disabled", { status: 403 });
     }
     if (createStatus === "max_users_reached") {
+      if (inviteConsumed) await inviteCodeModel.refundOne(normalizedInviteCode);
       return new Response("max_users_reached", { status: 403 });
     }
     userCreated = true;
@@ -174,6 +213,13 @@ export async function handleAuthRegisterRequest(request: Request, env: Env): Pro
     headers.append("Content-Type", "application/json");
     return new Response(JSON.stringify({ success: true, accessToken, recoveryKey }), { headers });
   } catch (e: any) {
+    if (inviteConsumed) {
+      try {
+        await inviteCodeModel.refundOne(normalizedInviteCode);
+      } catch (refundErr) {
+        console.error("Failed to refund invite code after signup rollback:", refundErr);
+      }
+    }
     if (userCreated) {
       // 防御性回滚：清除由于后续步骤失败遗留的未完成注册脏数据，防止用户名被锁死
       try {

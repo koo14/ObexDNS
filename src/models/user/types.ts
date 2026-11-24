@@ -24,6 +24,7 @@ export interface CreateUserOptions {
   role: string;
   timezone?: string | null;
   locale?: string | null;
+  inviteCode?: string | null;
   passwordVersion?: number;
 }
 

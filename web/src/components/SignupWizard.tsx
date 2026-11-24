@@ -19,6 +19,7 @@ interface AuthConfig {
   optional_session_expiration_days?: number;
   has_users?: boolean;
   registration_enabled?: boolean;
+  invite_code_enabled?: boolean;
   max_users?: number | null;
   max_users_reached?: boolean;
 }
@@ -60,6 +61,9 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
     setSignupStep,
     username,
     setUsername,
+    inviteCode,
+    setInviteCode,
+    requiresInviteCode,
     password,
     setPassword,
     mfaChoice,
@@ -190,11 +194,12 @@ export const SignupWizard: React.FC<SignupWizardProps> = ({
           usernameFocused={usernameFocused}
           setUsernameFocused={setUsernameFocused}
           checkUsernameDuplicate={checkUsernameDuplicate}
+          requiresInviteCode={requiresInviteCode}
+          inviteCode={inviteCode}
+          setInviteCode={setInviteCode}
           loading={loading}
           onSubmit={handleSignupUsernameSubmit}
-          onClearError={() =>
-            setError((prev) => (prev === t("auth.usernameExists") ? "" : prev))
-          }
+          onClearError={() => setError("")}
         />
       )}
 

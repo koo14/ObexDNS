@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   validateUsername,
   validatePassword,
+  validateInviteCode,
   checkPasswordBreached,
   isPasswordLeaked,
   hashTotpToken,
@@ -11,6 +12,7 @@ import {
 } from "../../utils/auth";
 import {
   checkUsernameDuplicate as checkUsernameDuplicateService,
+  checkInviteCode as checkInviteCodeService,
   signup,
   setupTotp,
   confirmTotp,
@@ -27,6 +29,8 @@ interface AuthConfig {
   turnstile_site_key: string;
   turnstile_enabled_signup: boolean;
   turnstile_enabled_login: boolean;
+  has_users?: boolean;
+  invite_code_enabled?: boolean;
 }
 
 export interface UseSignupWizardProps {
@@ -52,8 +56,10 @@ export const useSignupWizard = ({
 
   // Input states
   const [username, setUsername] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [password, setPassword] = useState("");
   const [totpSetupToken, setTotpSetupToken] = useState("");
+  const requiresInviteCode = Boolean(authConfig?.has_users !== false && authConfig?.invite_code_enabled);
 
   // TOTP response states
   const [totpSetupData, setTotpSetupData] = useState<{
@@ -123,17 +129,32 @@ export const useSignupWizard = ({
       return;
     }
 
+    const normalizedCode = inviteCode.trim().toUpperCase();
+    if (requiresInviteCode) {
+      if (!normalizedCode) {
+        setError(t("auth.inviteCodeRequired", "请输入 6 位邀请码。"));
+        return;
+      }
+      if (!validateInviteCode(normalizedCode)) {
+        setError(t("auth.inviteCodeInvalid", "邀请码无效，请检查是否为正确的 6 位大写字母或数字。"));
+        return;
+      }
+    }
+
     setLoading(true);
     setError("");
     try {
       const exists = await checkUsernameDuplicateService(username);
       if (exists) {
         setError(t("auth.usernameExists"));
-      } else {
-        setSignupStep("password");
+        return;
       }
-    } catch (err) {
-      setError(t("auth.networkError"));
+      if (requiresInviteCode) {
+        await checkInviteCodeService(normalizedCode);
+      }
+      setSignupStep("password");
+    } catch (err: any) {
+      setError(formatApiErrorMessage(err, t));
     } finally {
       setLoading(false);
     }
@@ -250,7 +271,8 @@ export const useSignupWizard = ({
       const data = await signup({
         username,
         password: clientHash,
-        turnstileToken
+        turnstileToken,
+        ...(requiresInviteCode ? { inviteCode: inviteCode.trim().toUpperCase() } : {})
       });
 
       if (data.accessToken) {
@@ -285,6 +307,9 @@ export const useSignupWizard = ({
     setSignupStep,
     username,
     setUsername,
+    inviteCode,
+    setInviteCode,
+    requiresInviteCode,
     password,
     setPassword,
     mfaChoice,
